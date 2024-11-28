@@ -1,0 +1,40 @@
+{
+    "name": "slave",
+    "abi": {
+        "methods": [
+            {
+                "name": "addNumbers",
+                "offset": 0,
+                "parameters": [
+                    {
+                        "name": "a",
+                        "type": "Integer"
+                    },
+                    {
+                        "name": "b",
+                        "type": "Integer"
+                    }
+                ],
+                "returntype": "Integer",
+                "safe": false
+            }
+        ],
+        "events": [
+            {
+                "name": "info",
+                "parameters": [
+                    {
+                        "name": "message",
+                        "type": "ByteArray"
+                    }
+                ]
+            }
+        ]
+    },
+    "features": {},
+    "groups": [],
+    "permissions": [],
+    "supportedstandards": [],
+    "trusts": [],
+    "extra": null
+}
