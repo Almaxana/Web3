@@ -1,0 +1,6 @@
+name: "NFT market"
+safemethods: [ "list" ]
+
+permissions:
+  - methods: [ "properties","transfer" ]
+#    - contract:

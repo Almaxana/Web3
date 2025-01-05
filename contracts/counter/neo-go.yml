@@ -1,0 +1,44 @@
+name: Counter
+supportedstandards: []
+events:
+  - name: info
+    parameters:
+      - name: message
+        type: ByteString
+# safemethods:
+#   - main
+# methods:
+#   - name: _deploy
+#     parameters:
+#       - name: data
+#         type: Any
+#       - name: isUpdate
+#         type: Boolean
+#     returntype: Void
+#     safe: false
+#   - name: main
+#     parameters: []
+#     returntype: Any
+#     safe: true
+# abi:
+#   methods:
+#     - name: _deploy
+#       offset: 0
+#       parameters:
+#         - name: data
+#           type: Any
+#         - name: isUpdate
+#           type: Boolean
+#       returntype: Void
+#     - name: main
+#       offset: 50
+#       parameters: []
+#       returntype: Any
+# events:
+#   - name: info
+#     parameters:
+#       - name: message
+#         type: ByteArray
+# permissions:
+#   - contract: '*'
+#     methods: '*'

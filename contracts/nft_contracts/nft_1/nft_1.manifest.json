@@ -1,0 +1,203 @@
+{
+    "name": "nft_1",
+    "abi": {
+        "methods": [
+            {
+                "name": "_initialize",
+                "offset": 0,
+                "parameters": [],
+                "returntype": "Void",
+                "safe": false
+            },
+            {
+                "name": "_deploy",
+                "offset": 3,
+                "parameters": [
+                    {
+                        "name": "data",
+                        "type": "Any"
+                    },
+                    {
+                        "name": "isUpdate",
+                        "type": "Boolean"
+                    }
+                ],
+                "returntype": "Void",
+                "safe": false
+            },
+            {
+                "name": "balanceOf",
+                "offset": 230,
+                "parameters": [
+                    {
+                        "name": "holder",
+                        "type": "Hash160"
+                    }
+                ],
+                "returntype": "Integer",
+                "safe": true
+            },
+            {
+                "name": "decimals",
+                "offset": 202,
+                "parameters": [],
+                "returntype": "Integer",
+                "safe": true
+            },
+            {
+                "name": "onNEP17Payment",
+                "offset": 1057,
+                "parameters": [
+                    {
+                        "name": "from",
+                        "type": "Hash160"
+                    },
+                    {
+                        "name": "amount",
+                        "type": "Integer"
+                    },
+                    {
+                        "name": "data",
+                        "type": "Any"
+                    }
+                ],
+                "returntype": "Void",
+                "safe": false
+            },
+            {
+                "name": "ownerOf",
+                "offset": 287,
+                "parameters": [
+                    {
+                        "name": "token",
+                        "type": "ByteArray"
+                    }
+                ],
+                "returntype": "Hash160",
+                "safe": true
+            },
+            {
+                "name": "properties",
+                "offset": 307,
+                "parameters": [
+                    {
+                        "name": "token",
+                        "type": "ByteArray"
+                    }
+                ],
+                "returntype": "Map",
+                "safe": true
+            },
+            {
+                "name": "symbol",
+                "offset": 190,
+                "parameters": [],
+                "returntype": "String",
+                "safe": true
+            },
+            {
+                "name": "tokens",
+                "offset": 415,
+                "parameters": [],
+                "returntype": "InteropInterface",
+                "safe": true
+            },
+            {
+                "name": "tokensList",
+                "offset": 447,
+                "parameters": [],
+                "returntype": "Array",
+                "safe": false
+            },
+            {
+                "name": "tokensOf",
+                "offset": 517,
+                "parameters": [
+                    {
+                        "name": "holder",
+                        "type": "Hash160"
+                    }
+                ],
+                "returntype": "InteropInterface",
+                "safe": true
+            },
+            {
+                "name": "tokensOfList",
+                "offset": 579,
+                "parameters": [
+                    {
+                        "name": "holder",
+                        "type": "Hash160"
+                    }
+                ],
+                "returntype": "Array",
+                "safe": false
+            },
+            {
+                "name": "totalSupply",
+                "offset": 204,
+                "parameters": [],
+                "returntype": "Integer",
+                "safe": true
+            },
+            {
+                "name": "transfer",
+                "offset": 677,
+                "parameters": [
+                    {
+                        "name": "to",
+                        "type": "Hash160"
+                    },
+                    {
+                        "name": "token",
+                        "type": "ByteArray"
+                    },
+                    {
+                        "name": "data",
+                        "type": "Any"
+                    }
+                ],
+                "returntype": "Boolean",
+                "safe": false
+            }
+        ],
+        "events": [
+            {
+                "name": "Transfer",
+                "parameters": [
+                    {
+                        "name": "from",
+                        "type": "Hash160"
+                    },
+                    {
+                        "name": "to",
+                        "type": "Hash160"
+                    },
+                    {
+                        "name": "amount",
+                        "type": "Integer"
+                    },
+                    {
+                        "name": "tokenId",
+                        "type": "ByteArray"
+                    }
+                ]
+            }
+        ]
+    },
+    "features": {},
+    "groups": [],
+    "permissions": [
+        {
+            "contract": "*",
+            "methods": [
+                "onNEP11Payment"
+            ]
+        }
+    ],
+    "supportedstandards": [
+        "NEP-11"
+    ],
+    "trusts": [],
+    "extra": null
+}

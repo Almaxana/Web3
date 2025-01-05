@@ -1,0 +1,7 @@
+name: slave
+supportedstandards: []
+events:
+  - name: info
+    parameters:
+      - name: message
+        type: ByteString
