@@ -1,0 +1,6 @@
+wallet: "wallet.json"
+password: ""
+rpc_endpoint: "http://localhost:30333"
+backend_key: "03b09baabff3f6107c7e9acb8721a6fc5618d45b50247a314d82e548702cce8cd5"
+nyan_contract: "bc9859835d14e0d36139fe02dfa7295df0787580"
+backend_url: "http://localhost:5555"
