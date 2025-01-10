@@ -35,40 +35,43 @@ const (
 )
 
 func main() {
-	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM) // если пользователь нажмет ctrl+C, то завершим выполнение
 
-	if len(os.Args) != 2 {
+	if len(os.Args) != 2 { // go run client/main.go client/config.yml - команда запуска, проверяем, что параметров 2
 		die(fmt.Errorf("invalid args: %v", os.Args))
 	}
 
-	viper.GetViper().SetConfigType("yml")
+	viper.GetViper().SetConfigType("yml") // конфиг написан в формате yaml
 
-	f, err := os.Open(os.Args[1])
+	f, err := os.Open(os.Args[1]) // открываем конфиг
 	die(err)
-	die(viper.GetViper().ReadConfig(f))
-	die(f.Close())
+	die(viper.GetViper().ReadConfig(f)) // считываем
+	die(f.Close())                      // закрываем
 
-	rpcCli, err := rpcclient.New(ctx, viper.GetString(cfgRPCEndpoint), rpcclient.Options{})
-	die(err)
-
-	backendKey, err := keys.NewPublicKeyFromString(viper.GetString(cfgBackendKey))
+	rpcCli, err := rpcclient.New(ctx, viper.GetString(cfgRPCEndpoint), rpcclient.Options{}) // создание rpc клиента взаимодействия приложений
+	// или пользователей с нодой bc, rpc_endpoint = "http://localhost:30333"
 	die(err)
 
-	w, err := wallet.NewWalletFromFile(viper.GetString(cfgWallet))
-	die(err)
-	acc := w.GetAccount(w.GetChangeAddress())
-	err = acc.Decrypt(viper.GetString(cfgPassword), w.Scrypt)
+	backendKey, err := keys.NewPublicKeyFromString(viper.GetString(cfgBackendKey)) // получаем PK backendа, у него есть кошелек
 	die(err)
 
-	contractHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgNyanContract))
+	w, err := wallet.NewWalletFromFile(viper.GetString(cfgWallet)) //  создаем кошелек пользователя (на нем не будет денег, т.к за него будет платить
+	// backend, но на нем будут nft)
+	die(err)
+	acc := w.GetAccount(w.GetChangeAddress())                 // получаем аккаунт из кошелька (акк там один, но бывает и много, как в wallet1 ex)
+	err = acc.Decrypt(viper.GetString(cfgPassword), w.Scrypt) // подтверждаем его паролем
 	die(err)
 
-	die(claimNotaryDeposit(acc))
-	die(makeNotaryRequest(backendKey, acc, rpcCli, contractHash))
+	contractHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgNyanContract)) // получаем адрес nyan контракта c nft
+	die(err)
+
+	die(claimNotaryDeposit(acc))                                  // запрос НД
+	die(makeNotaryRequest(backendKey, acc, rpcCli, contractHash)) // создание НЗ, который оборачивает main tx = вызов mint (получение nft пользователю на кошелек)
 }
 
 func claimNotaryDeposit(acc *wallet.Account) error {
-	resp, err := http.Get(viper.GetString(cfgBackendURL) + "/notary-deposit/" + acc.Address)
+	resp, err := http.Get(viper.GetString(cfgBackendURL) + "/notary-deposit/" + acc.Address) // формируем http запрос к backendу, он слушает http
+	// запросы на порту 5555, туда и говорим о своей просьбу накинуть нам НД
 	if err != nil {
 		return err
 	}
@@ -103,7 +106,7 @@ func makeNotaryRequest(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *
 		return fmt.Errorf("get free cat: %w", err)
 	}
 
-	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx)
+	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
 	if err != nil {
 		return err
 	}
@@ -114,7 +117,7 @@ func makeNotaryRequest(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *
 		return err
 	}
 
-	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, err) // отправка нотариального запроса
+	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, err) // отправка нотариального запроса; vub = valid until block
 	if err != nil {
 		return err
 	}

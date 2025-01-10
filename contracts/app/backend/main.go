@@ -62,18 +62,18 @@ const (
 )
 
 func main() {
-	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM) // если пользователь нажмет ctrl+C, то завершим выполнение
 
-	if len(os.Args) != 2 {
+	if len(os.Args) != 2 { // go run client/main.go client/config.yml - команда запуска, проверяем, что параметров 2
 		die(fmt.Errorf("invalid args: %v", os.Args))
 	}
 
-	viper.GetViper().SetConfigType("yml")
+	viper.GetViper().SetConfigType("yml") // конфиг написан в формате yaml
 
-	f, err := os.Open(os.Args[1])
+	f, err := os.Open(os.Args[1]) // открываем конфиг
 	die(err)
-	die(viper.GetViper().ReadConfig(f))
-	die(f.Close())
+	die(viper.GetViper().ReadConfig(f)) // считываем
+	die(f.Close())                      // закрываем
 
 	s, err := NewServer(ctx)
 	die(err)
@@ -82,30 +82,31 @@ func main() {
 }
 
 type Server struct {
-	p        *pool.Pool
-	acc      *wallet.Account
+	p        *pool.Pool      // пул = обертка над клиентом, который умеет работать со storage node
+	acc      *wallet.Account // кошелек, который будет платить за транзакции (вместо клиентского кошелька)
 	act      *actor.Actor
 	gasAct   *nep17.Token
 	nyanHash util.Uint160
-	cnrID    cid.ID
+	cnrID    cid.ID // Id контейнера в frost fs для хранения данных
 	log      *zap.Logger
 	rpcCli   *rpcclient.Client
-	sub      subscriber.Subscriber
+	sub      subscriber.Subscriber // подписчик на события bc
 }
 
 func NewServer(ctx context.Context) (*Server, error) {
-	rpcCli, err := rpcclient.New(ctx, viper.GetString(cfgRPCEndpoint), rpcclient.Options{})
+	rpcCli, err := rpcclient.New(ctx, viper.GetString(cfgRPCEndpoint), rpcclient.Options{}) // создание rpc клиента взаимодействия приложений
+	// или пользователей с нодой bc, rpc_endpoint = "http://localhost:30333"
 	if err != nil {
 		return nil, err
 	}
 
-	w, err := wallet.NewWalletFromFile(viper.GetString(cfgWallet))
+	w, err := wallet.NewWalletFromFile(viper.GetString(cfgWallet)) // загрузка кошелька
 	if err != nil {
 		return nil, err
 	}
 
-	acc := w.GetAccount(w.GetChangeAddress())
-	if err = acc.Decrypt(viper.GetString(cfgPassword), w.Scrypt); err != nil {
+	acc := w.GetAccount(w.GetChangeAddress())                                  // из кошелька wallet1 получаем аккаунт (акк там один)
+	if err = acc.Decrypt(viper.GetString(cfgPassword), w.Scrypt); err != nil { // подтверждаем акк паролем
 		return nil, err
 	}
 
@@ -114,8 +115,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 		return nil, err
 	}
 
-	p, err := createPool(ctx, acc, viper.GetString(cfgStorageNode)) // пул = обертка над клиентом, который
-	// умеет работать со storage node
+	p, err := createPool(ctx, acc, viper.GetString(cfgStorageNode)) // для работы со storage node, которая находится на "localhost:8080"
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,8 @@ func NewServer(ctx context.Context) (*Server, error) {
 
 	neoClient, err := morphclient.New(ctx, acc.PrivateKey(),
 		morphclient.WithEndpoints(morphclient.Endpoint{Address: viper.GetString(cfgRPCEndpointWS), Priority: 1}),
-	) // morphclient - обертка над клинтом, который умеет слушать нотификации из цепочки
+	) // morphclient - обертка над клинтом, который умеет слушать нотификации из цепочки; rpc_endpoint_ws отличается от обычного rpc_endpoint тем, что rpc_endpoint_ws автоматически уведомляет нас
+	// о событиях (если мы слушаем его), а к rpc_endpoint нужно непрерывно обращаться, чтобы получить что-то
 	if err != nil {
 		return nil, fmt.Errorf("new morph client: %w", err)
 	}
@@ -141,7 +142,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 		return nil, err
 	}
 
-	params := new(subscriber.Params)
+	params := new(subscriber.Params) // создания подписчика на события bc
 	params.Client = neoClient
 	l, err := logger.NewLogger(nil)
 	if err != nil {
@@ -153,11 +154,11 @@ func NewServer(ctx context.Context) (*Server, error) {
 		return nil, err
 	}
 
-	if err = sub.SubscribeForNotaryRequests(acc.ScriptHash()); err != nil {
+	if err = sub.SubscribeForNotaryRequests(acc.ScriptHash()); err != nil { // подписываемся на события нотариальных запросов в bc
 		return nil, err
 	}
 
-	log, err := zap.NewDevelopment()
+	log, err := zap.NewDevelopment() // создание логгера
 	if err != nil {
 		return nil, err
 	}
@@ -176,11 +177,13 @@ func NewServer(ctx context.Context) (*Server, error) {
 }
 
 func (s *Server) Listen(ctx context.Context) error {
-	if err := s.notaryDeposit(s.acc.ScriptHash()); err != nil {
+	if err := s.notaryDeposit(s.acc.ScriptHash()); err != nil { // накидываем себе (серверу) НД
 		return fmt.Errorf("notary backend deposit: %w", err)
 	}
 
-	go s.runNotaryValidator(ctx)
+	go s.runNotaryValidator(ctx) // // запускается слушатель нотариальных запросов в отдельной горутине (фоновый процесс)
+
+	// обработчики запросов, которые слушают на 5555
 
 	http.DefaultServeMux.HandleFunc("/balance", func(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("balance request")
@@ -198,7 +201,7 @@ func (s *Server) Listen(ctx context.Context) error {
 		}
 	})
 
-	http.DefaultServeMux.HandleFunc("/properties/{tokenID}", func(w http.ResponseWriter, r *http.Request) { // обработчик запроса посмотреть свойства указанного nft токена
+	http.DefaultServeMux.HandleFunc("/properties/{tokenID}", func(w http.ResponseWriter, r *http.Request) { // обработчик запроса "посмотреть свойства указанного nft токена"
 		s.log.Info("properties request")
 
 		tokenIDStr := r.PathValue("tokenID")
@@ -236,7 +239,8 @@ func (s *Server) Listen(ctx context.Context) error {
 		}
 	})
 
-	http.DefaultServeMux.HandleFunc("/notary-deposit/{userAddress}", func(w http.ResponseWriter, r *http.Request) {
+	http.DefaultServeMux.HandleFunc("/notary-deposit/{userAddress}", func(w http.ResponseWriter, r *http.Request) { // накинуть НД по нужному адресу (клиент
+		// этот запрос дергает, чтобы себе получить НД)
 		s.log.Info("notary-deposit request", zap.String("url", r.URL.String()))
 
 		var userID user.ID
@@ -293,11 +297,11 @@ func parseMap(m *stackitem.Map) (map[string]string, error) {
 	return res, nil
 }
 
-func createPool(ctx context.Context, acc *wallet.Account, addr string) (*pool.Pool, error) {
+func createPool(ctx context.Context, acc *wallet.Account, addr string) (*pool.Pool, error) { // создание пула соединений со storage node
 	var prm pool.InitParameters
-	prm.SetKey(&acc.PrivateKey().PrivateKey)   // PK сервера
+	prm.SetKey(&acc.PrivateKey().PrivateKey)   // SK сервера
 	prm.AddNode(pool.NewNodeParam(1, addr, 1)) // storage node (localhost:8080)
-	prm.SetNodeDialTimeout(5 * time.Second)
+	prm.SetNodeDialTimeout(5 * time.Second)    // max время ожидания для подключения к узлу
 
 	p, err := pool.NewPool(prm)
 	if err != nil {
@@ -312,14 +316,15 @@ func createPool(ctx context.Context, acc *wallet.Account, addr string) (*pool.Po
 	return p, nil
 }
 
-func (s *Server) runNotaryValidator(ctx context.Context) { // запускается слушатель нотариальных запросов
+func (s *Server) runNotaryValidator(ctx context.Context) { // слушатель НЗ из bc
 	s.log.Info("start listening")
 
 	for {
 		select {
 		case <-ctx.Done():
 			die(ctx.Err())
-		case notaryEvent, ok := <-s.sub.NotificationChannels().NotaryRequestsCh:
+		case notaryEvent, ok := <-s.sub.NotificationChannels().NotaryRequestsCh: // ждем события из канала NotaryRequestsCh,
+			// который предоставляет уведомления о нотариальных запросах
 			if !ok {
 				return
 			}
@@ -409,7 +414,7 @@ func (s *Server) notaryActor(userWitness transaction.Witness) *notary.Actor {
 	return nAct
 }
 
-func (s *Server) notaryDeposit(to util.Uint160) error { // на указанный адрес отправляем со счета сервера газ
+func (s *Server) notaryDeposit(to util.Uint160) error { // на указанный адрес отправляем газ
 	data := []any{to, int64(math.MaxUint32)}
 	_, err := s.act.Wait(s.gasAct.Transfer(s.act.Sender(), notary.Hash, big.NewInt(1*native.GASFactor), data))
 	return err
@@ -468,7 +473,9 @@ func (s *Server) proceedMainTx(ctx context.Context, nAct *notary.Actor, notaryEv
 	addr := s.cnrID.EncodeToString() + "/" + objID.ObjectID.EncodeToString()
 	s.log.Info("put object", zap.String("url", url), zap.String("address", addr))
 
-	_, err = s.act.Wait(s.act.SendCall(s.nyanHash, "setAddress", tokenName, addr)) // добавляем адрес токену
+	_, err = s.act.Wait(s.act.SendCall(s.nyanHash, "setAddress", tokenName, addr)) // добавляем адрес токену. После того, как произошел mint, заполнены у нового
+	// nft будут поля, кроме address. Он будет добавляться отдельно здесь, после того, как токен создался.
+	// Потому что пользователь должен знать, какую nft он хочет выписать
 	if err != nil {
 		return fmt.Errorf("wait setAddress: %w", err)
 	}
@@ -510,12 +517,12 @@ func (o Op) Param() []byte {
 
 func validateNotaryRequest(req *payload.P2PNotaryRequest) (util.Uint160, string, error) {
 	var (
-		opCode opcode.Opcode
-		param  []byte
+		opCode opcode.Opcode // мб = PUSH, CALL, RET и тп
+		param  []byte        // параметры инструкции
 	)
 
-	ctx := vm.NewContext(req.MainTransaction.Script)
-	ops := make([]Op, 0, 10) // 10 is maximum num of opcodes for calling contracts with 4 args(no arrays of arrays)
+	ctx := vm.NewContext(req.MainTransaction.Script) // контекст vm, будем пошагаво разбирать байт код
+	ops := make([]Op, 0, 10)                         // 10 is maximum num of opcodes for calling contracts with 4 args(no arrays of arrays)
 
 	var err error
 	for {
@@ -533,20 +540,22 @@ func validateNotaryRequest(req *payload.P2PNotaryRequest) (util.Uint160, string,
 
 	opsLen := len(ops)
 
-	contractSysCall := make([]byte, 4)
+	contractSysCall := make([]byte, 4) // 4 байтам равен идентификатор системного вызова в neo
 	binary.LittleEndian.PutUint32(contractSysCall, interopnames.ToID([]byte(interopnames.SystemContractCall)))
 	// check if it is tx with contract call
-	if !bytes.Equal(ops[opsLen-1].param, contractSysCall) {
+	if !bytes.Equal(ops[opsLen-1].param, contractSysCall) { // смотрим последнюю инструкцию ops[opsLen-1]
+		// потому что операция в скрипте tx, если tx соответствует вызову другого контракта,  в NeoVM всегда должна быть последней
+		// проверяем, действительно последняя инструкция является вызовом контракта
 		return util.Uint160{}, "", errors.New("not contract syscall")
 	}
 
 	// retrieve contract's script hash
-	contractHash, err := util.Uint160DecodeBytesBE(ops[opsLen-2].param)
+	contractHash, err := util.Uint160DecodeBytesBE(ops[opsLen-2].param) // вызываемый контракт - 2ая с конца инструкция
 	if err != nil {
 		return util.Uint160{}, "", err
 	}
 
-	contractHashExpected, err := util.Uint160DecodeStringLE("bc9859835d14e0d36139fe02dfa7295df0787580")
+	contractHashExpected, err := util.Uint160DecodeStringLE("bc9859835d14e0d36139fe02dfa7295df0787580") // вызываемый контракт
 	if err != nil {
 		return util.Uint160{}, "", err
 	}
@@ -556,18 +565,18 @@ func validateNotaryRequest(req *payload.P2PNotaryRequest) (util.Uint160, string,
 	}
 
 	// retrieve contract's method
-	contractMethod := string(ops[opsLen-3].param)
+	contractMethod := string(ops[opsLen-3].param) // название метода - 3я с конца инструкция
 	if contractMethod != "mint" {
 		return util.Uint160{}, "", fmt.Errorf("unexpecred contract method: %s", contractMethod)
 	}
 
 	// check if there is a call flag(must be in range [0:15))
-	callFlag := callflag.CallFlag(ops[opsLen-4].code - opcode.PUSH0)
+	callFlag := callflag.CallFlag(ops[opsLen-4].code - opcode.PUSH0) // флаги - 4ая с конца инструкция
 	if callFlag > callflag.All {
 		return util.Uint160{}, "", fmt.Errorf("incorrect call flag: %s", callFlag)
 	}
 
-	args := ops[:opsLen-4]
+	args := ops[:opsLen-4] // аргументы - все инструкции до 4ой с конца
 
 	if len(args) != 0 {
 		err = validateParameterOpcodes(args)
@@ -579,7 +588,8 @@ func validateNotaryRequest(req *payload.P2PNotaryRequest) (util.Uint160, string,
 		args = args[:len(args)-2]
 	}
 
-	if len(args) != 2 {
+	// аргументы лежат в обратном порядке (как мы их передаем, только наоборот)
+	if len(args) != 2 { // mint принимает ровно 2 аргумента
 		return util.Uint160{}, "", fmt.Errorf("invalid param length: %d", len(args))
 	}
 
