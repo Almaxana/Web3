@@ -97,7 +97,7 @@ func validateNotaryRequestStartAuction(req *payload.P2PNotaryRequest) (util.Uint
 		return util.Uint160{}, nil, 0, err
 	}
 
-	contractHashExpected, err := util.Uint160DecodeStringLE("45c904b50922ded714019a49796dafbdd981247f") // вызываемый контракт
+	contractHashExpected, err := util.Uint160DecodeStringLE("29c1332ede5f2ac639fa2c72b9e29babf110faaf") // вызываемый контракт
 	if err != nil {
 		return util.Uint160{}, nil, 0, err
 	}
