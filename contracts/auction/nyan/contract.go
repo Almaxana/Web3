@@ -52,7 +52,7 @@ func _deploy(data interface{}, isUpdate bool) {
 
 // Symbol returns token symbol, it's NYAN.
 func Symbol() string {
-	return "TICKET"
+	return "LOT"
 }
 
 // Decimals returns token decimals, this NFT is non-divisible, so it's 0.

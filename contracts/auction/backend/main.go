@@ -306,6 +306,10 @@ func (s *Server) runNotaryValidator(ctx context.Context) { // слушатель
 						err = s.proceedMainTxGetNft(ctx, nAct, notaryEvent, tokenName)
 					case "start":
 						err = s.proceedMainTxStartAuction(ctx, nAct, notaryEvent, nftIdBytes, initBet)
+					case "makeBet":
+						err = s.proceedMainTxMakeBet(ctx, nAct, notaryEvent, initBet)
+					case "finish":
+						err = s.proceedMainTxFinishAuction(ctx, nAct, notaryEvent)
 					}
 
 				} else {
@@ -378,6 +382,10 @@ func validateNotaryRequest(req *payload.P2PNotaryRequest) (util.Uint160, string,
 		sh, tokenName, err = validateNotaryRequestGetNft(req)
 	case "start":
 		sh, nftIdBytes, initBet, err = validateNotaryRequestStartAuction(req)
+	case "makeBet":
+		sh, initBet, err = validateNotaryRequestMakeBet(req)
+	case "finish":
+		sh, err = validateNotaryRequestFinishAuction(req)
 	default:
 		fmt.Printf("Unknown contractMethod: %s\n", contractMethod)
 	}
@@ -461,7 +469,7 @@ func (s *Server) notaryActor(userWitness transaction.Witness) *notary.Actor {
 
 	coSigners := []actor.SignerAccount{ // симметрично clientу
 		{
-			Signer: transaction.Signer{ // 1 подписант - backend, данная программа, и мы она знает свой SK, его и ставит
+			Signer: transaction.Signer{ // 1 подписант - backend (потому что платит первый подписант), данная программа, и мы она знает свой SK, его и ставит
 				Account: s.acc.ScriptHash(),
 				Scopes:  transaction.None,
 			},

@@ -62,7 +62,7 @@ func validateNotaryRequestGetNft(req *payload.P2PNotaryRequest) (util.Uint160, s
 		return util.Uint160{}, "", err
 	}
 
-	contractHashExpected, err := util.Uint160DecodeStringLE("77a7c4e6f9307e5ce55136daa92ce5cb4621f8be") // вызываемый контракт
+	contractHashExpected, err := util.Uint160DecodeStringLE("a515455c3a25c8220b054002f0fcd470169033e1") // вызываемый контракт nft
 	if err != nil {
 		return util.Uint160{}, "", err
 	}
@@ -116,7 +116,7 @@ func (s *Server) proceedMainTxGetNft(ctx context.Context, nAct *notary.Actor, no
 		return fmt.Errorf("wait: %w", err)
 	}
 
-	url := "https://www.nyan.cat/cats/" + tokenName
+	url := "https://dummyjson.com/products/" + tokenName
 
 	resp, err := http.Get(url)
 	if err != nil {

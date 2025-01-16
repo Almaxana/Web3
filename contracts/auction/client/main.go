@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"git.frostfs.info/TrueCloudLab/hrw"
+	"github.com/nspcc-dev/neo-go/pkg/core/state"
 	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
 	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
 	"github.com/nspcc-dev/neo-go/pkg/rpcclient"
@@ -36,6 +37,8 @@ const (
 	cfgBackendURL      = "backend_url"
 )
 
+var listOfNftNames []string
+
 func main() {
 	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM) // если пользователь нажмет ctrl+C, то завершим выполнение
 
@@ -55,7 +58,7 @@ func main() {
 	backendKey, err := keys.NewPublicKeyFromString(viper.GetString(cfgBackendKey)) // получаем PK backendа, у него есть кошелек
 	die(err)
 
-	w, err := wallet.NewWalletFromFile(viper.GetString(cfgWallet)) //  создаем кошелек пользователя (на нем не будет денег, т.к за него будет платить
+	w, err := wallet.NewWalletFromFile(viper.GetString(cfgWallet)) //  получаем кошелек пользователя (на нем не будет денег, т.к за него будет платить
 	// backend, но на нем будут nft)
 	die(err)
 	acc := w.GetAccount(w.GetChangeAddress())                 // получаем аккаунт из кошелька (акк там один, но бывает и много, как в wallet1 ex)
@@ -70,6 +73,15 @@ func main() {
 
 	die(claimNotaryDeposit(acc)) // запрос НД
 
+	numbers := make([]int, 25) // создание списка имен пока еще свободных nft
+	for i := 1; i <= 25; i++ {
+		numbers[i-1] = i
+	}
+	listOfNftNames = make([]string, len(numbers))
+	for i, num := range numbers {
+		listOfNftNames[i] = strconv.Itoa(num)
+	}
+
 	switch commandName {
 	case "startAuction":
 		nftId := os.Args[3] // lot
@@ -82,14 +94,19 @@ func main() {
 		}
 
 		die(makeNotaryRequestStartAuction(backendKey, acc, rpcCli, auctionContractHash, nftId, initBet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
-	// case "makeBet":
-	// 	die(makeNotaryRequestMakeBet(backendKey, acc, rpcCli, auctionContractHash)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
-	// case "finishAuction":
-	// 	die(makeNotaryRequestFinishAuction(backendKey, acc, rpcCli, auctionContractHash)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
+	case "makeBet":
+		betStr := os.Args[3]
+		bet, err := strconv.Atoi(betStr)
+		if err != nil {
+			fmt.Printf("Error converting bet number to integer: %v\n", err)
+			return
+		}
+		die(makeNotaryRequestMakeBet(backendKey, acc, rpcCli, auctionContractHash, bet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
+	case "finishAuction":
+		die(makeNotaryRequestFinishAuction(backendKey, acc, rpcCli, auctionContractHash))
 	case "getNFT":
-		die(makeNotaryRequestGetNft(backendKey, acc, rpcCli, nftContractHash)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
+		die(makeNotaryRequestGetNft(backendKey, acc, rpcCli, nftContractHash))
 	default:
-		// log.Printf("Unknown commandName: %s", commandName)
 		fmt.Printf("Unknown commandName: %s\n", commandName)
 	}
 
@@ -108,11 +125,10 @@ func claimNotaryDeposit(acc *wallet.Account) error {
 
 	return nil
 }
-
-func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160) error {
+func makeNotaryRequestPreProcessing(acc *wallet.Account, backendKey *keys.PublicKey, rpcCli *rpcclient.Client) (*notary.Actor, error) {
 	coSigners := []actor.SignerAccount{
 		{
-			Signer: transaction.Signer{ // первый подписант - backend, который будет платить за tx, когда она примется. Мы не знаем его  SK, поэтому ставим PK
+			Signer: transaction.Signer{ // первый подписант - backend, который будет платить за tx, когда она примется (потому что платит первый подписант). Мы не знаем его  SK, поэтому ставим PK
 				Account: backendKey.GetScriptHash(),
 				Scopes:  transaction.None,
 			},
@@ -127,14 +143,43 @@ func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rp
 		},
 	}
 
+	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
+	if err != nil {
+		return nil, err
+	}
+
+	return nAct, err
+}
+
+func makeNotaryRequestPostProcessing(tx *transaction.Transaction, nAct *notary.Actor) (*state.AppExecResult, error) {
+	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, nil) // отправка нотариального запроса; vub = valid until block
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("Notarize sending: mainHash - %v, fallbackHash - %v, vub - %d\n", mainHash, fallbackHash, vub)
+
+	res, err := nAct.Wait(mainHash, fallbackHash, vub, err) // ждем пока примется какя-нибудь tx  (основная (main), если все хорошо, либо fallBack)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.VMState != vmstate.Halt {
+		return nil, fmt.Errorf("invalid vm state: %s", res.VMState)
+	}
+
+	return res, err
+}
+
+func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160) error {
 	nyanCat, err := getFreeNyanCat(rpcCli, acc, contractHash) // находит свободную гифку
 	if err != nil {
 		return fmt.Errorf("get free cat: %w", err)
 	}
 
-	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
+	nAct, err := makeNotaryRequestPreProcessing(acc, backendKey, rpcCli)
 	if err != nil {
-		return err
+		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
 	}
 
 	tx, err := nAct.MakeTunedCall(contractHash, "mint", nil, nil, acc.ScriptHash(), nyanCat) // tx = вызов метода mint на
@@ -143,26 +188,14 @@ func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rp
 		return err
 	}
 
-	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, err) // отправка нотариального запроса; vub = valid until block
+	res, err := makeNotaryRequestPostProcessing(tx, nAct)
 	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Notarize sending: mainHash - %v, fallbackHash - %v, vub - %d\n", mainHash, fallbackHash, vub)
-
-	res, err := nAct.Wait(mainHash, fallbackHash, vub, err) // ждем пока примется какя-нибудь tx  (основная (main), если все хорошо, либо fallBack)
-	if err != nil {
-		return err
-	}
-
-	if res.VMState != vmstate.Halt {
-		return fmt.Errorf("invalid vm state: %s", res.VMState)
+		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
 
 	if len(res.Stack) != 1 {
 		return fmt.Errorf("invalid stack size: %d", len(res.Stack))
 	}
-
 	tokenID, err := res.Stack[0].TryBytes() // если все хорошо, значит токен создан, берем его со стека
 	if err != nil {
 		return err
@@ -174,26 +207,9 @@ func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rp
 }
 
 func makeNotaryRequestStartAuction(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160, nftId string, initBet int) error {
-	coSigners := []actor.SignerAccount{
-		{
-			Signer: transaction.Signer{ // первый подписант - backend, который будет платить за tx, когда она примется. Мы не знаем его  SK, поэтому ставим PK
-				Account: backendKey.GetScriptHash(),
-				Scopes:  transaction.None,
-			},
-			Account: notary.FakeSimpleAccount(backendKey),
-		},
-		{
-			Signer: transaction.Signer{
-				Account: acc.ScriptHash(), // следующий подписант - client, данная программа, она знает свой SK, поэтому ставит его
-				Scopes:  transaction.Global,
-			},
-			Account: acc,
-		},
-	}
-
-	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
+	nAct, err := makeNotaryRequestPreProcessing(acc, backendKey, rpcCli)
 	if err != nil {
-		return err
+		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
 	}
 
 	nftIdBytes, err := hex.DecodeString(nftId)
@@ -206,20 +222,9 @@ func makeNotaryRequestStartAuction(backendKey *keys.PublicKey, acc *wallet.Accou
 		return err
 	}
 
-	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, err) // отправка нотариального запроса; vub = valid until block
+	_, err = makeNotaryRequestPostProcessing(tx, nAct)
 	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Notarize sending: mainHash - %v, fallbackHash - %v, vub - %d\n", mainHash, fallbackHash, vub)
-
-	res, err := nAct.Wait(mainHash, fallbackHash, vub, err) // ждем пока примется какя-нибудь tx  (основная (main), если все хорошо, либо fallBack)
-	if err != nil {
-		return err
-	}
-
-	if res.VMState != vmstate.Halt {
-		return fmt.Errorf("invalid vm state: %s", res.VMState)
+		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
 
 	fmt.Println("aution started")
@@ -228,52 +233,21 @@ func makeNotaryRequestStartAuction(backendKey *keys.PublicKey, acc *wallet.Accou
 }
 
 func makeNotaryRequestMakeBet(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160, bet int) error {
-	coSigners := []actor.SignerAccount{
-		{
-			Signer: transaction.Signer{ // первый подписант - backend, который будет платить за tx, когда она примется. Мы не знаем его  SK, поэтому ставим PK
-				Account: backendKey.GetScriptHash(),
-				Scopes:  transaction.None,
-			},
-			Account: notary.FakeSimpleAccount(backendKey),
-		},
-		{
-			Signer: transaction.Signer{
-				Account: acc.ScriptHash(), // следующий подписант - client, данная программа, она знает свой SK, поэтому ставит его
-				Scopes:  transaction.Global,
-			},
-			Account: acc,
-		},
-	}
 
-	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
+	nAct, err := makeNotaryRequestPreProcessing(acc, backendKey, rpcCli)
 	if err != nil {
-		return err
+		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
 	}
 
 	tx, err := nAct.MakeTunedCall(contractHash, "makeBet", nil, nil, acc.ScriptHash(), bet) // tx = вызов метода makeBet на
-	// контракте ayction
+	// контракте auction
 	if err != nil {
 		return err
 	}
 
-	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, err) // отправка нотариального запроса; vub = valid until block
+	_, err = makeNotaryRequestPostProcessing(tx, nAct)
 	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Notarize sending: mainHash - %v, fallbackHash - %v, vub - %d\n", mainHash, fallbackHash, vub)
-
-	res, err := nAct.Wait(mainHash, fallbackHash, vub, err) // ждем пока примется какя-нибудь tx  (основная (main), если все хорошо, либо fallBack)
-	if err != nil {
-		return err
-	}
-
-	if res.VMState != vmstate.Halt {
-		return fmt.Errorf("invalid vm state: %s", res.VMState)
-	}
-
-	if len(res.Stack) != 1 {
-		return fmt.Errorf("invalid stack size: %d", len(res.Stack))
+		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
 
 	fmt.Println("bet accepted")
@@ -282,26 +256,9 @@ func makeNotaryRequestMakeBet(backendKey *keys.PublicKey, acc *wallet.Account, r
 }
 
 func makeNotaryRequestFinishAuction(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160) error {
-	coSigners := []actor.SignerAccount{
-		{
-			Signer: transaction.Signer{ // первый подписант - backend, который будет платить за tx, когда она примется. Мы не знаем его  SK, поэтому ставим PK
-				Account: backendKey.GetScriptHash(),
-				Scopes:  transaction.None,
-			},
-			Account: notary.FakeSimpleAccount(backendKey),
-		},
-		{
-			Signer: transaction.Signer{
-				Account: acc.ScriptHash(), // следующий подписант - client, данная программа, она знает свой SK, поэтому ставит его
-				Scopes:  transaction.Global,
-			},
-			Account: acc,
-		},
-	}
-
-	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
+	nAct, err := makeNotaryRequestPreProcessing(acc, backendKey, rpcCli)
 	if err != nil {
-		return err
+		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
 	}
 
 	tx, err := nAct.MakeTunedCall(contractHash, "finish", nil, nil, acc.ScriptHash()) // tx = вызов метода finish на
@@ -310,97 +267,20 @@ func makeNotaryRequestFinishAuction(backendKey *keys.PublicKey, acc *wallet.Acco
 		return err
 	}
 
-	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, err) // отправка нотариального запроса; vub = valid until block
+	_, err = makeNotaryRequestPostProcessing(tx, nAct)
 	if err != nil {
-		return err
+		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
 
-	fmt.Printf("Notarize sending: mainHash - %v, fallbackHash - %v, vub - %d\n", mainHash, fallbackHash, vub)
-
-	res, err := nAct.Wait(mainHash, fallbackHash, vub, err) // ждем пока примется какя-нибудь tx  (основная (main), если все хорошо, либо fallBack)
-	if err != nil {
-		return err
-	}
-
-	if res.VMState != vmstate.Halt {
-		return fmt.Errorf("invalid vm state: %s", res.VMState)
-	}
-
-	if len(res.Stack) != 1 {
-		return fmt.Errorf("invalid stack size: %d", len(res.Stack))
-	}
-
-	fmt.Println("uction finished")
+	fmt.Println("auction finished")
 
 	return nil
 }
 
-var listOfCats = []string{
-	"404.gif",
-	"america.gif",
-	"balloon.gif",
-	"bday.gif",
-	"bloon.gif",
-	"breakfast.gif",
-	"daft.gif",
-	"dub.gif",
-	"easter.gif",
-	"elevator.gif",
-	"fat.gif",
-	"fiesta.gif",
-	"floppy.gif",
-	"ganja.gif",
-	"gb.gif",
-	"grumpy.gif",
-	"j5.gif",
-	"jacksnyan.gif",
-	"jamaicnyan.gif",
-	"jazz.gif",
-	"jazzcat.gif",
-	"manyan.gif",
-	"melon.gif",
-	"mexinyan.gif",
-	"mummy.gif",
-	"newyear.gif",
-	"nyanamerica.gif",
-	"nyancat.gif",
-	"nyancoin.gif",
-	"nyandoge.gif",
-	"nyaninja.gif",
-	"nyanvirus.gif",
-	"oldnewyear.gif",
-	"oldnyan.gif",
-	"original.gif",
-	"paddy.gif",
-	"pikanyan.gif",
-	"pirate.gif",
-	"pumpkin.gif",
-	"rasta.gif",
-	"retro.gif",
-	"sad.gif",
-	"sadnyan.gif",
-	"skrillex.gif",
-	"slomo.gif",
-	"slomocat.gif",
-	"smooth.gif",
-	"smurfcat.gif",
-	"star.gif",
-	"starsheep.gif",
-	"tacnayn.gif",
-	"tacodog.gif",
-	"technyancolor.gif",
-	"toaster.gif",
-	"vday.gif",
-	"watermelon.gif",
-	"wtf.gif",
-	"xmas.gif",
-	"xmasold.gif",
-	"zombie.gif",
-}
-
 func getFreeNyanCat(cli *rpcclient.Client, acc *wallet.Account, contractHash util.Uint160) (string, error) {
 	// пробегает по списку гифок, определяет свободна или нет, дергая ownerOf. Найдя первую свободную, возвращает
-	indexes := make([]uint64, len(listOfCats))
+
+	indexes := make([]uint64, len(listOfNftNames))
 	for i := range indexes {
 		indexes[i] = uint64(i)
 	}
@@ -418,7 +298,7 @@ func getFreeNyanCat(cli *rpcclient.Client, acc *wallet.Account, contractHash uti
 
 	var cat string
 	for _, index := range indexes {
-		cat = listOfCats[index]
+		cat = listOfNftNames[index]
 
 		hash := sha256.New()
 		hash.Write([]byte(cat))
