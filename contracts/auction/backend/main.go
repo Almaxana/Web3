@@ -54,7 +54,7 @@ const (
 	cfgRPCEndpointWS    = "rpc_endpoint_ws"
 	cfgWallet           = "wallet"
 	cfgPassword         = "password"
-	cfgNftContract      = "nyan_contract"
+	cfgNftContract      = "nft_contract"
 	cfgAuctionContract  = "auction_contract"
 	cfgStorageNode      = "storage_node"
 	cfgStorageContainer = "storage_container"

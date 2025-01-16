@@ -172,9 +172,9 @@ func makeNotaryRequestPostProcessing(tx *transaction.Transaction, nAct *notary.A
 }
 
 func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160) error {
-	nyanCat, err := getFreeNyanCat(rpcCli, acc, contractHash) // находит свободную гифку
+	nftName, err := getFreeNftName(rpcCli, acc, contractHash) // находит свободную гифку
 	if err != nil {
-		return fmt.Errorf("get free cat: %w", err)
+		return fmt.Errorf("get free product: %w", err)
 	}
 
 	nAct, err := makeNotaryRequestPreProcessing(acc, backendKey, rpcCli)
@@ -182,8 +182,8 @@ func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rp
 		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
 	}
 
-	tx, err := nAct.MakeTunedCall(contractHash, "mint", nil, nil, acc.ScriptHash(), nyanCat) // tx = вызов метода mint на
-	// контракте nft (nyanCat - имя гифки) - себе получаем гифку
+	tx, err := nAct.MakeTunedCall(contractHash, "mint", nil, nil, acc.ScriptHash(), nftName) // tx = вызов метода mint на
+	// контракте nft - себе получаем json
 	if err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func makeNotaryRequestFinishAuction(backendKey *keys.PublicKey, acc *wallet.Acco
 	return nil
 }
 
-func getFreeNyanCat(cli *rpcclient.Client, acc *wallet.Account, contractHash util.Uint160) (string, error) {
+func getFreeNftName(cli *rpcclient.Client, acc *wallet.Account, contractHash util.Uint160) (string, error) {
 	// пробегает по списку гифок, определяет свободна или нет, дергая ownerOf. Найдя первую свободную, возвращает
 
 	indexes := make([]uint64, len(listOfNftNames))
@@ -296,12 +296,12 @@ func getFreeNyanCat(cli *rpcclient.Client, acc *wallet.Account, contractHash uti
 	// идут с разных концов, используем рандеву-хэширование
 	hrw.Sort(indexes, h)
 
-	var cat string
+	var product string
 	for _, index := range indexes {
-		cat = listOfNftNames[index]
+		product = listOfNftNames[index]
 
 		hash := sha256.New()
-		hash.Write([]byte(cat))
+		hash.Write([]byte(product))
 		tokenID := hash.Sum(nil)
 
 		if _, err := unwrap.Uint160(act.Call(contractHash, "ownerOf", tokenID)); err != nil {
@@ -309,11 +309,11 @@ func getFreeNyanCat(cli *rpcclient.Client, acc *wallet.Account, contractHash uti
 		}
 	}
 
-	if cat == "" {
-		return "", errors.New("all cats are taken") // не осталось свободных токенов
+	if product == "" {
+		return "", errors.New("all products are taken") // не осталось свободных токенов
 	}
 
-	return cat, nil
+	return product, nil
 }
 
 func die(err error) {

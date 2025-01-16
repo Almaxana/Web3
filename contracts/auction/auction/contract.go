@@ -45,10 +45,10 @@ func Start(auctionOwner interop.Hash160, lotId []byte, initBet int) {
 		panic("initial bet must not be negative")
 	}
 
-	// a515455c3a25c8220b054002f0fcd470169033e1 - адрес nft контракта, чтобы получить из него nyanContractHashString, надо вручную в консоли
-	// написать команду neo-go util convert a515455c3a25c8220b054002f0fcd470169033e1 и взять из нее LE ScriptHash to Address
-	nyanContractHashString := "NgSizZqHUyvB2p3gKMQ3CGv6B6mN4KwVzf"
-	ownerOfLot := contract.Call(address.ToHash160(nyanContractHashString), "ownerOf", contract.All, lotId).(interop.Hash160)
+	// 96e218fa4570c97f8832ee2b69d54369a78cd818 - адрес nft контракта, чтобы получить из него nftContractHashString, надо вручную в консоли
+	// написать команду neo-go util convert 96e218fa4570c97f8832ee2b69d54369a78cd818 и взять из нее LE ScriptHash to Address
+	nftContractHashString := "NNBLpUgJdq3zVR425TwrafEXgqxYDwXp6s"
+	ownerOfLot := contract.Call(address.ToHash160(nftContractHashString), "ownerOf", contract.All, lotId).(interop.Hash160)
 	if !ownerOfLot.Equals(auctionOwner) {
 		panic("you can't start auction with lot " + string(lotId) + " because you're not its owner")
 	}
@@ -96,8 +96,8 @@ func Finish(finishInitiator interop.Hash160) {
 
 	lotId := storage.Get(ctx, lotKey)
 
-	nyanContractHashString := "NgSizZqHUyvB2p3gKMQ3CGv6B6mN4KwVzf"
-	res := contract.Call(address.ToHash160(nyanContractHashString), "transfer", contract.All, potentialWinner, lotId, nil).(bool)
+	nftContractHashString := "NNBLpUgJdq3zVR425TwrafEXgqxYDwXp6s"
+	res := contract.Call(address.ToHash160(nftContractHashString), "transfer", contract.All, potentialWinner, lotId, nil).(bool)
 	if !res {
 		panic("error while transfer token to winner")
 	}
