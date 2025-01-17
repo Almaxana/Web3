@@ -54,7 +54,7 @@ func (s *Server) proceedMainTxGetNft(ctx context.Context, nAct *notary.Actor, no
 		return fmt.Errorf("wait: %w", err)
 	}
 
-	url := "https://dummyjson.com/products/" + tokenName
+	url := s.apiUrl + tokenName
 
 	resp, err := http.Get(url)
 	if err != nil {

@@ -59,6 +59,7 @@ const (
 	cfgStorageNode      = "storage_node"
 	cfgStorageContainer = "storage_container"
 	cfgListenAddress    = "listen_address"
+	cfgProductApiUrl    = "product_api_url"
 )
 
 var currentOperation = ""
@@ -94,6 +95,7 @@ type Server struct {
 	log         *zap.Logger
 	rpcCli      *rpcclient.Client
 	sub         subscriber.Subscriber // подписчик на события bc
+	apiUrl      string
 }
 
 func NewServer(ctx context.Context) (*Server, error) {
@@ -127,6 +129,8 @@ func NewServer(ctx context.Context) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	productApiUrl := viper.GetString(cfgProductApiUrl)
 
 	contractAuctionHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgAuctionContract))
 	if err != nil {
@@ -182,6 +186,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 		cnrID:       cnrID,
 		log:         log,
 		sub:         sub,
+		apiUrl:      productApiUrl,
 	}, nil
 }
 

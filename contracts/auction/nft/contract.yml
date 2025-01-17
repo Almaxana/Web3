@@ -1,4 +1,4 @@
-name: "NYAN NFT"
+name: "PRODUCT NFT"
 supportedstandards: ["NEP-11"]
 safemethods: ["balanceOf", "decimals", "symbol", "totalSupply", "tokensOf", "ownerOf", "tokens", "properties"]
 events:
