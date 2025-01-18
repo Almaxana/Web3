@@ -31,7 +31,7 @@ func (s *Server) proceedMainTxFinishAuction(nAct *notary.Actor, notaryEvent *res
 }
 
 func validateNotaryRequestFinishAuction(req *payload.P2PNotaryRequest, s *Server) (util.Uint160, error) {
-	args, contractHash, err := validateNotaryRequestPerProcessing(req)
+	args, contractHash, err := validateNotaryRequestPreProcessing(req)
 	if err != nil {
 		return util.Uint160{}, err
 	}

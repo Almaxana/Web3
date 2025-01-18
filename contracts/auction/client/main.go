@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"git.frostfs.info/TrueCloudLab/hrw"
@@ -29,6 +31,7 @@ import (
 
 const (
 	cfgRPCEndpoint     = "rpc_endpoint"
+	cfgRPCEndpointWC   = "rpc_endpoint_ws"
 	cfgBackendKey      = "backend_key"
 	cfgWallet          = "wallet"
 	cfgPassword        = "password"
@@ -42,6 +45,10 @@ var listOfNftNames []string
 func main() {
 	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM) // если пользователь нажмет ctrl+C, то завершим выполнение
 
+	if len(os.Args) != 2 { // go run client/main.go client/config.yml - команда запуска, проверяем, что параметров 2
+		die(fmt.Errorf("invalid args: %v", os.Args))
+	}
+
 	viper.GetViper().SetConfigType("yml") // конфиг написан в формате yaml
 
 	configFile, err := os.Open(os.Args[1]) // открываем конфиг
@@ -49,11 +56,11 @@ func main() {
 	die(viper.GetViper().ReadConfig(configFile)) // считываем
 	die(configFile.Close())                      // закрываем
 
-	commandName := os.Args[2] // команда
-
 	rpcCli, err := rpcclient.New(ctx, viper.GetString(cfgRPCEndpoint), rpcclient.Options{}) // создание rpc клиента взаимодействия приложений
 	// или пользователей с нодой bc, rpc_endpoint = "http://localhost:30333"
 	die(err)
+
+	rpcEndpointWc := viper.GetString(cfgRPCEndpointWC)
 
 	backendKey, err := keys.NewPublicKeyFromString(viper.GetString(cfgBackendKey)) // получаем PK backendа, у него есть кошелек
 	die(err)
@@ -71,8 +78,6 @@ func main() {
 	auctionContractHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgAuctionContract)) // получаем адрес auction контракта
 	die(err)
 
-	die(claimNotaryDeposit(acc)) // запрос НД
-
 	numbers := make([]int, 25) // создание списка имен пока еще свободных nft
 	for i := 1; i <= 25; i++ {
 		numbers[i-1] = i
@@ -82,32 +87,52 @@ func main() {
 		listOfNftNames[i] = strconv.Itoa(num)
 	}
 
-	switch commandName {
-	case "startAuction":
-		nftId := os.Args[3] // lot
+	go ListenNotifications(rpcEndpointWc, viper.GetString(cfgAuctionContract))
 
-		initBetStr := os.Args[4] // initBet
-		initBet, err := strconv.Atoi(initBetStr)
+	reader := bufio.NewReader(os.Stdin) // создаём reader для чтения команд
+	for {
+		fmt.Print("Введите команду: ")
+		input, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Printf("Error converting bet number to integer: %v\n", err)
+			fmt.Println("Ошибка ввода:", err)
+			continue
+		}
+		input = strings.TrimSpace(input)
+		args := strings.Fields(input)
+
+		commandName := args[0]
+
+		die(claimNotaryDeposit(acc)) // запрос НД
+
+		switch commandName {
+		case "startAuction":
+			nftId := args[1] // lot
+
+			initBetStr := args[2] // initBet
+			initBet, err := strconv.Atoi(initBetStr)
+			if err != nil {
+				fmt.Printf("Error converting bet number to integer: %v\n", err)
+				return
+			}
+			die(makeNotaryRequestStartAuction(backendKey, acc, rpcCli, auctionContractHash, nftId, initBet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
+		case "makeBet":
+			betStr := args[1]
+			bet, err := strconv.Atoi(betStr)
+			if err != nil {
+				fmt.Printf("Error converting bet number to integer: %v\n", err)
+				return
+			}
+			die(makeNotaryRequestMakeBet(backendKey, acc, rpcCli, auctionContractHash, bet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
+		case "finishAuction":
+			die(makeNotaryRequestFinishAuction(backendKey, acc, rpcCli, auctionContractHash))
+		case "getNFT":
+			die(makeNotaryRequestGetNft(backendKey, acc, rpcCli, nftContractHash))
+		case "exit":
 			return
+		default:
+			fmt.Printf("Unknown commandName: %s\n", commandName)
 		}
 
-		die(makeNotaryRequestStartAuction(backendKey, acc, rpcCli, auctionContractHash, nftId, initBet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
-	case "makeBet":
-		betStr := os.Args[3]
-		bet, err := strconv.Atoi(betStr)
-		if err != nil {
-			fmt.Printf("Error converting bet number to integer: %v\n", err)
-			return
-		}
-		die(makeNotaryRequestMakeBet(backendKey, acc, rpcCli, auctionContractHash, bet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
-	case "finishAuction":
-		die(makeNotaryRequestFinishAuction(backendKey, acc, rpcCli, auctionContractHash))
-	case "getNFT":
-		die(makeNotaryRequestGetNft(backendKey, acc, rpcCli, nftContractHash))
-	default:
-		fmt.Printf("Unknown commandName: %s\n", commandName)
 	}
 
 }
@@ -206,7 +231,7 @@ func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rp
 	return nil
 }
 
-func makeNotaryRequestStartAuction(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160, nftId string, initBet int) error {
+func makeNotaryRequestStartAuction(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractAuctionHash util.Uint160, nftId string, initBet int) error {
 	nAct, err := makeNotaryRequestPreProcessing(acc, backendKey, rpcCli)
 	if err != nil {
 		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
@@ -216,7 +241,7 @@ func makeNotaryRequestStartAuction(backendKey *keys.PublicKey, acc *wallet.Accou
 	if err != nil {
 		fmt.Printf("Invalid convertion nftId: %s", err)
 	}
-	tx, err := nAct.MakeTunedCall(contractHash, "start", nil, nil, acc.ScriptHash(), nftIdBytes, initBet) // tx = вызов метода start на
+	tx, err := nAct.MakeTunedCall(contractAuctionHash, "start", nil, nil, acc.ScriptHash(), nftIdBytes, initBet) // tx = вызов метода start на
 	// контракте auction
 	if err != nil {
 		return err
@@ -226,8 +251,6 @@ func makeNotaryRequestStartAuction(backendKey *keys.PublicKey, acc *wallet.Accou
 	if err != nil {
 		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
-
-	fmt.Println("aution started")
 
 	return nil
 }
@@ -250,8 +273,6 @@ func makeNotaryRequestMakeBet(backendKey *keys.PublicKey, acc *wallet.Account, r
 		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
 
-	fmt.Println("bet accepted")
-
 	return nil
 }
 
@@ -271,8 +292,6 @@ func makeNotaryRequestFinishAuction(backendKey *keys.PublicKey, acc *wallet.Acco
 	if err != nil {
 		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
-
-	fmt.Println("auction finished")
 
 	return nil
 }

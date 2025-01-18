@@ -16,7 +16,7 @@ import (
 )
 
 func validateNotaryRequestGetNft(req *payload.P2PNotaryRequest, s *Server) (util.Uint160, string, error) {
-	args, contractHash, err := validateNotaryRequestPerProcessing(req)
+	args, contractHash, err := validateNotaryRequestPreProcessing(req)
 	if err != nil {
 		return util.Uint160{}, "", err
 	}

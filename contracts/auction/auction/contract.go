@@ -59,7 +59,7 @@ func Start(auctionOwner interop.Hash160, lotId []byte, initBet int) {
 	storage.Put(ctx, initBetKey, initBet)
 	storage.Put(ctx, currentBetKey, initBet)
 
-	runtime.Notify("info", []byte("Auction started by owner "+string(auctionOwner)))
+	runtime.Notify("info", []byte("New auction started with initial bet = "+intToStr(initBet)))
 }
 
 func MakeBet(maker interop.Hash160, bet int) {
@@ -82,7 +82,7 @@ func MakeBet(maker interop.Hash160, bet int) {
 	storage.Put(ctx, currentBetKey, bet)
 	storage.Put(ctx, potentialWinnerKey, maker)
 
-	runtime.Notify("info", []byte("Bet is made by owner "+string(maker)))
+	runtime.Notify("info", []byte("New bet = "+intToStr(bet)+" is made"))
 
 }
 
@@ -96,6 +96,11 @@ func Finish(finishInitiator interop.Hash160) {
 
 	potentialWinner := storage.Get(ctx, potentialWinnerKey).(interop.Hash160)
 	if potentialWinner == nil {
+		storage.Delete(ctx, initBetKey)
+		storage.Delete(ctx, currentBetKey)
+		storage.Delete(ctx, potentialWinnerKey)
+		storage.Delete(ctx, organizerKey)
+		storage.Delete(ctx, lotKey)
 		runtime.Notify("info", []byte("Auction finished"))
 		return
 	}
@@ -116,6 +121,20 @@ func Finish(finishInitiator interop.Hash160) {
 
 	runtime.Notify("info", []byte("Auction finished"))
 
+}
+
+func intToStr(value int) string {
+	if value == 0 {
+		return "0"
+	}
+	var chars = "0123456789"
+	var result string
+	for value > 0 {
+		result = string(chars[value%10]) + result
+		value = value / 10
+	}
+
+	return result
 }
 
 func ShowCurrentBet() string {

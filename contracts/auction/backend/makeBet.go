@@ -32,7 +32,7 @@ func (s *Server) proceedMainTxMakeBet(nAct *notary.Actor, notaryEvent *result.No
 }
 
 func validateNotaryRequestMakeBet(req *payload.P2PNotaryRequest, s *Server) (util.Uint160, int, error) {
-	args, contractHash, err := validateNotaryRequestPerProcessing(req)
+	args, contractHash, err := validateNotaryRequestPreProcessing(req)
 	if err != nil {
 		return util.Uint160{}, 0, err
 	}
