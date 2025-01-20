@@ -4,6 +4,7 @@ import (
 	"github.com/nspcc-dev/neo-go/pkg/interop"
 	"github.com/nspcc-dev/neo-go/pkg/interop/contract"
 	"github.com/nspcc-dev/neo-go/pkg/interop/iterator"
+	"github.com/nspcc-dev/neo-go/pkg/interop/lib/address"
 	"github.com/nspcc-dev/neo-go/pkg/interop/native/crypto"
 	"github.com/nspcc-dev/neo-go/pkg/interop/native/management"
 	"github.com/nspcc-dev/neo-go/pkg/interop/native/std"
@@ -19,6 +20,8 @@ const (
 
 	ownerKey       = 'o'
 	totalSupplyKey = 's'
+	nnsDomain      = "nft.auc"
+	nnsRecordType  = 16
 )
 
 type NFTItem struct {
@@ -48,11 +51,20 @@ func _deploy(data interface{}, isUpdate bool) {
 	ctx := storage.GetContext()
 	storage.Put(ctx, ownerKey, args.Admin)
 	storage.Put(ctx, totalSupplyKey, 0)
+
+	nnsContractHashString := "NcCZaxnLkXvrd56DgpFSSBjhj2DqzH3jKP"
+	selfHash := runtime.GetExecutingScriptHash()
+	currentNnsRecord := contract.Call(address.ToHash160(nnsContractHashString), "getRecords", contract.All, nnsDomain, nnsRecordType)
+	if currentNnsRecord != nil {
+		contract.Call(address.ToHash160(nnsContractHashString), "deleteRecords", contract.All, nnsDomain, nnsRecordType)
+	}
+	contract.Call(address.ToHash160(nnsContractHashString), "addRecord", contract.All, nnsDomain, nnsRecordType, address.FromHash160(selfHash))
+
 }
 
 // Symbol returns token symbol, it's NYAN.
 func Symbol() string {
-	return "PRODUCT"
+	return "TICKET"
 }
 
 // Decimals returns token decimals, this NFT is non-divisible, so it's 0.

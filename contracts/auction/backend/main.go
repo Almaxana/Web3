@@ -547,7 +547,7 @@ func (s *Server) notaryActor(userWitness transaction.Witness) *notary.Actor {
 
 	coSigners := []actor.SignerAccount{ // симметрично clientу
 		{
-			Signer: transaction.Signer{ // 1 подписант - backend (потому что платит первый подписант), данная программа, и мы она знает свой SK, его и ставит
+			Signer: transaction.Signer{ // 1 подписант - backend (потому что платит первый подписант), данная программа, и она знает свой SK, его и ставит
 				Account: s.acc.ScriptHash(),
 				Scopes:  transaction.None,
 			},
