@@ -2,11 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +23,7 @@ import (
 	"github.com/nspcc-dev/neo-go/pkg/core/state"
 	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
 	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
+	"github.com/nspcc-dev/neo-go/pkg/encoding/base58"
 	"github.com/nspcc-dev/neo-go/pkg/rpcclient"
 	"github.com/nspcc-dev/neo-go/pkg/rpcclient/actor"
 	"github.com/nspcc-dev/neo-go/pkg/rpcclient/notary"
@@ -30,14 +35,13 @@ import (
 )
 
 const (
-	cfgRPCEndpoint     = "rpc_endpoint"
-	cfgRPCEndpointWC   = "rpc_endpoint_ws"
-	cfgBackendKey      = "backend_key"
-	cfgWallet          = "wallet"
-	cfgPassword        = "password"
-	cfgNftContract     = "nft_contract"
-	cfgAuctionContract = "auction_contract"
-	cfgBackendURL      = "backend_url"
+	cfgRPCEndpoint   = "rpc_endpoint"
+	cfgRPCEndpointWC = "rpc_endpoint_ws"
+	cfgBackendKey    = "backend_key"
+	cfgWallet        = "wallet"
+	cfgPassword      = "password"
+	cfgNnsContract   = "nns_contract"
+	cfgBackendURL    = "backend_url"
 )
 
 var listOfNftNames []string
@@ -72,10 +76,12 @@ func main() {
 	err = acc.Decrypt(viper.GetString(cfgPassword), w.Scrypt) // подтверждаем его паролем
 	die(err)
 
-	nftContractHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgNftContract)) // получаем адрес контракта c nft
-	die(err)
+	// nnsContractHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgNnsContract))
+	// die(err)
 
-	auctionContractHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgAuctionContract)) // получаем адрес auction контракта
+	nftContractHash, err := GetNnsResolve("nft.auc")
+	die(err)
+	auctionContractHash, err := GetNnsResolve("auc.auc")
 	die(err)
 
 	numbers := make([]int, 25) // создание списка имен пока еще свободных nft
@@ -87,7 +93,7 @@ func main() {
 		listOfNftNames[i] = strconv.Itoa(num)
 	}
 
-	go ListenNotifications(rpcEndpointWc, viper.GetString(cfgAuctionContract))
+	go ListenNotifications(rpcEndpointWc, auctionContractHash.StringLE())
 
 	reader := bufio.NewReader(os.Stdin) // создаём reader для чтения команд
 	for {
@@ -150,6 +156,7 @@ func claimNotaryDeposit(acc *wallet.Account) error {
 
 	return nil
 }
+
 func makeNotaryRequestPreProcessing(acc *wallet.Account, backendKey *keys.PublicKey, rpcCli *rpcclient.Client) (*notary.Actor, error) {
 	coSigners := []actor.SignerAccount{
 		{
@@ -174,6 +181,105 @@ func makeNotaryRequestPreProcessing(acc *wallet.Account, backendKey *keys.Public
 	}
 
 	return nAct, err
+}
+
+func GetNnsResolve(domainName string) (util.Uint160, error) {
+
+	type StackItem struct {
+		Type  string `json:"type"`
+		Value []struct {
+			Type  string `json:"type"`
+			Value string `json:"value"`
+		} `json:"value"`
+	}
+
+	type RPCResponse struct {
+		ID      int    `json:"id"`
+		JSONRPC string `json:"jsonrpc"`
+		Result  struct {
+			State         string        `json:"state"`
+			GasConsumed   string        `json:"gasconsumed"`
+			Script        string        `json:"script"`
+			Stack         []StackItem   `json:"stack"`
+			Exception     interface{}   `json:"exception"`
+			Notifications []interface{} `json:"notifications"`
+		} `json:"result"`
+	}
+
+	rpcURL := "http://localhost:30333"
+
+	rpcRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "invokefunction",
+		"params": []interface{}{
+			"8477fcff838587103b4d008a198a4a0c3a62a5b2", // ScriptHash контракта nns
+			"resolve", // Имя метода
+			[]interface{}{ // Параметры функции
+				map[string]interface{}{
+					"type":  "String",
+					"value": domainName,
+				},
+				map[string]interface{}{
+					"type":  "Integer",
+					"value": "16",
+				},
+			},
+		},
+		"id": 1,
+	}
+
+	jsonData, err := json.Marshal(rpcRequest)
+	if err != nil {
+		fmt.Printf("Ошибка кодирования JSON: %v\n", err)
+		return util.Uint160{}, err
+	}
+
+	// Отправка HTTP POST-запроса
+	resp, err := http.Post(rpcURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("Ошибка отправки запроса: %v\n", err)
+		return util.Uint160{}, err
+	}
+	defer resp.Body.Close()
+
+	// Чтение ответа
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Ошибка чтения ответа: %v\n", err)
+		return util.Uint160{}, err
+	}
+
+	var rpcResponse RPCResponse
+
+	// Парсим JSON-ответ
+	err = json.Unmarshal([]byte(string(body)), &rpcResponse)
+	if err != nil {
+		fmt.Println("Ошибка парсинга JSON:", err)
+		return util.Uint160{}, err
+	}
+
+	// Извлекаем нужное значение из стека
+	if len(rpcResponse.Result.Stack) > 0 && len(rpcResponse.Result.Stack[0].Value) > 0 {
+		value := rpcResponse.Result.Stack[0].Value[0].Value
+		decoded64, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			fmt.Println("Ошибка при декодировании Base64:", err)
+		}
+
+		decoded58, err := base58.CheckDecode(string(decoded64))
+		if err != nil {
+			return util.Uint160{}, err
+		}
+		contractHashStr := hex.EncodeToString(decoded58)[2:]
+		contractHash, err := util.Uint160DecodeStringBE(contractHashStr)
+		if err != nil {
+			return util.Uint160{}, err
+		}
+
+		return contractHash, nil
+	}
+
+	return util.Uint160{}, fmt.Errorf("stack is empty or unexpected structure")
 }
 
 func makeNotaryRequestPostProcessing(tx *transaction.Transaction, nAct *notary.Actor) (*state.AppExecResult, error) {
