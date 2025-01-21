@@ -85,6 +85,6 @@ func ListenNotifications(url string, contractToListen string) {
 			continue
 		}
 		decodedString := string(decodedBytes)
-		fmt.Print("\nNOTIFICATION:", decodedString, "\n")
+		fmt.Print("\nNOTIFICATION: ", decodedString, "\n")
 	}
 }

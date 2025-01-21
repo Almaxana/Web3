@@ -76,12 +76,11 @@ func main() {
 	err = acc.Decrypt(viper.GetString(cfgPassword), w.Scrypt) // подтверждаем его паролем
 	die(err)
 
-	// nnsContractHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgNnsContract))
-	// die(err)
+	nnsContractHash := viper.GetString(cfgNnsContract)
 
-	nftContractHash, err := GetNnsResolve("nft.auc")
+	nftContractHash, err := GetNnsResolve("nft.auc", nnsContractHash, viper.GetString(cfgRPCEndpoint))
 	die(err)
-	auctionContractHash, err := GetNnsResolve("auc.auc")
+	auctionContractHash, err := GetNnsResolve("auc.auc", nnsContractHash, viper.GetString(cfgRPCEndpoint))
 	die(err)
 
 	numbers := make([]int, 25) // создание списка имен пока еще свободных nft
@@ -183,7 +182,7 @@ func makeNotaryRequestPreProcessing(acc *wallet.Account, backendKey *keys.Public
 	return nAct, err
 }
 
-func GetNnsResolve(domainName string) (util.Uint160, error) {
+func GetNnsResolve(domainName string, nnsContractHash string, rpcEndpoint string) (util.Uint160, error) {
 
 	type StackItem struct {
 		Type  string `json:"type"`
@@ -206,15 +205,13 @@ func GetNnsResolve(domainName string) (util.Uint160, error) {
 		} `json:"result"`
 	}
 
-	rpcURL := "http://localhost:30333"
-
 	rpcRequest := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "invokefunction",
 		"params": []interface{}{
-			"8477fcff838587103b4d008a198a4a0c3a62a5b2", // ScriptHash контракта nns
-			"resolve", // Имя метода
-			[]interface{}{ // Параметры функции
+			nnsContractHash,
+			"resolve",
+			[]interface{}{
 				map[string]interface{}{
 					"type":  "String",
 					"value": domainName,
@@ -235,7 +232,7 @@ func GetNnsResolve(domainName string) (util.Uint160, error) {
 	}
 
 	// Отправка HTTP POST-запроса
-	resp, err := http.Post(rpcURL, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(rpcEndpoint, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Printf("Ошибка отправки запроса: %v\n", err)
 		return util.Uint160{}, err
