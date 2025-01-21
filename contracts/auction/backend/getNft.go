@@ -22,7 +22,6 @@ func validateNotaryRequestGetNft(req *payload.P2PNotaryRequest, s *Server) (util
 	}
 
 	contractHashExpected := s.nftHash
-
 	if !contractHash.Equals(contractHashExpected) {
 		return util.Uint160{}, "", fmt.Errorf("unexpected contract hash: %s", contractHash)
 	}
