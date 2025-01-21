@@ -126,6 +126,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 	}
 
 	contractNftHash, err := util.Uint160DecodeStringLE(viper.GetString(cfgNftContract))
+	fmt.Print("=================", contractNftHash)
 	if err != nil {
 		return nil, err
 	}

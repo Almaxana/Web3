@@ -18,10 +18,11 @@ const (
 	accountPrefix = "a"
 	tokenPrefix   = "t"
 
-	ownerKey       = 'o'
-	totalSupplyKey = 's'
-	nnsDomain      = "nft.auc"
-	nnsRecordType  = 16
+	ownerKey              = 'o'
+	totalSupplyKey        = 's'
+	nnsSelfDomain         = "nft.auc"
+	nnsRecordType         = 16
+	nnsContractHashString = "NcCZaxnLkXvrd56DgpFSSBjhj2DqzH3jKP"
 )
 
 type NFTItem struct {
@@ -52,13 +53,13 @@ func _deploy(data interface{}, isUpdate bool) {
 	storage.Put(ctx, ownerKey, args.Admin)
 	storage.Put(ctx, totalSupplyKey, 0)
 
-	nnsContractHashString := "NcCZaxnLkXvrd56DgpFSSBjhj2DqzH3jKP"
 	selfHash := runtime.GetExecutingScriptHash()
-	currentNnsRecord := contract.Call(address.ToHash160(nnsContractHashString), "getRecords", contract.All, nnsDomain, nnsRecordType)
+	contract.Call(address.ToHash160(nnsContractHashString), "register", contract.All, nnsSelfDomain, address.ToHash160("NfgHwwTi3wHAS8aFAN243C5vGbkYDpqLHP"), "owner_email@mail.ru", 100, 100, 31536000, 31536000)
+	currentNnsRecord := contract.Call(address.ToHash160(nnsContractHashString), "getRecords", contract.All, nnsSelfDomain, nnsRecordType)
 	if currentNnsRecord != nil {
-		contract.Call(address.ToHash160(nnsContractHashString), "deleteRecords", contract.All, nnsDomain, nnsRecordType)
+		contract.Call(address.ToHash160(nnsContractHashString), "deleteRecords", contract.All, nnsSelfDomain, nnsRecordType)
 	}
-	contract.Call(address.ToHash160(nnsContractHashString), "addRecord", contract.All, nnsDomain, nnsRecordType, address.FromHash160(selfHash))
+	contract.Call(address.ToHash160(nnsContractHashString), "addRecord", contract.All, nnsSelfDomain, nnsRecordType, address.FromHash160(selfHash))
 
 }
 
