@@ -18,8 +18,9 @@ const (
 	accountPrefix = "a"
 	tokenPrefix   = "t"
 
-	ownerKey              = 'o'
-	totalSupplyKey        = 's'
+	ownerKey       = 'o'
+	totalSupplyKey = 's'
+
 	nnsSelfDomain         = "nft.auc"
 	nnsRecordType         = 16
 	nnsContractHashString = "NcCZaxnLkXvrd56DgpFSSBjhj2DqzH3jKP"
@@ -60,7 +61,6 @@ func _deploy(data interface{}, isUpdate bool) {
 		contract.Call(address.ToHash160(nnsContractHashString), "deleteRecords", contract.All, nnsSelfDomain, nnsRecordType)
 	}
 	contract.Call(address.ToHash160(nnsContractHashString), "addRecord", contract.All, nnsSelfDomain, nnsRecordType, address.FromHash160(selfHash))
-
 }
 
 // Symbol returns token symbol, it's NYAN.
@@ -211,7 +211,7 @@ func postTransfer(from interop.Hash160, to interop.Hash160, token []byte, data a
 	}
 }
 
-func Mint(user interop.Hash160, name string) []byte { // пользователь, которму выписываем токен и имя токена=название файла с гифкой
+func Mint(user interop.Hash160, name string) []byte { // пользователь, которму выписываем токен и имя токена=название билета
 	ctx := storage.GetContext()
 	tokenID := crypto.Sha256([]byte(name))
 	if nftExists(ctx, tokenID) {
