@@ -11,11 +11,12 @@ import (
 
 // Prefixes used for contract data storage.
 const (
-	initBetKey            = "i"
-	currentBetKey         = "c"
-	lotKey                = "l" // nft id
-	organizerKey          = "o" // organizer of the auction
-	potentialWinnerKey    = "w" // owner of the last bet
+	initBetKey         = "i"
+	currentBetKey      = "c"
+	lotKey             = "l" // nft id
+	organizerKey       = "o" // organizer of the auction
+	potentialWinnerKey = "w" // owner of the last bet
+
 	nnsSelfDomain         = "auc.auc"
 	nnsNftDomain          = "nft.auc"
 	nnsRecordType         = 16
@@ -34,6 +35,7 @@ func _deploy(data interface{}, isUpdate bool) {
 		return
 	}
 
+	// регистрация в nns (при update хэш контракта не меняется, поэтому и в nns ничего не надо обновлять)
 	selfHash := runtime.GetExecutingScriptHash()
 	contract.Call(address.ToHash160(nnsContractHashString), "register", contract.All, nnsSelfDomain, address.ToHash160("NfgHwwTi3wHAS8aFAN243C5vGbkYDpqLHP"), "owner_email@mail.ru", 100, 100, 31536000, 31536000)
 	currentNnsRecord := contract.Call(address.ToHash160(nnsContractHashString), "getRecords", contract.All, nnsSelfDomain, nnsRecordType)
@@ -63,7 +65,7 @@ func Start(auctionOwner interop.Hash160, lotId []byte, initBet int) {
 	nftContractHashString := nftContractHashStringArray[0]
 	ownerOfLot := contract.Call(address.ToHash160(nftContractHashString), "ownerOf", contract.All, lotId).(interop.Hash160)
 	if !ownerOfLot.Equals(auctionOwner) {
-		panic("you can't start auction with lot " + string(lotId) + " because you're not its owner")
+		panic("you can't start auction with this lot because you're not its owner")
 	}
 
 	storage.Put(ctx, organizerKey, auctionOwner)
@@ -71,83 +73,63 @@ func Start(auctionOwner interop.Hash160, lotId []byte, initBet int) {
 	storage.Put(ctx, initBetKey, initBet)
 	storage.Put(ctx, currentBetKey, initBet)
 
-	runtime.Notify("info", []byte("New auction started with initial bet = "+intToStr(initBet)))
+	runtime.Notify("info", []byte("New auction started with initial bet = "+intToStr(initBet)+" by user "+address.FromHash160(auctionOwner)))
 }
 
-func MakeBet(maker interop.Hash160, bet int) {
+func MakeBet(better interop.Hash160, bet int) {
 	ctx := storage.GetContext()
 
-	currentOwner := storage.Get(ctx, organizerKey)
-	if currentOwner == nil {
-		panic("there are no auctions at this moment")
+	auctionOwner := storage.Get(ctx, organizerKey).(interop.Hash160)
+	if auctionOwner == nil {
+		panic("auction has not started")
+	}
+	if better.Equals(auctionOwner) {
+		panic("auction owner cannot make bet")
 	}
 
 	currentBet := storage.Get(ctx, currentBetKey).(int)
 	if bet <= currentBet {
-		panic("new bet must be greater than current")
-	}
-	auctionOwner := storage.Get(ctx, organizerKey)
-	if maker.Equals(auctionOwner) {
-		panic("owner of the auction can't make bet")
+		panic("bet must be higher than the current bet")
 	}
 
 	storage.Put(ctx, currentBetKey, bet)
-	storage.Put(ctx, potentialWinnerKey, maker)
+	storage.Put(ctx, potentialWinnerKey, better)
 
-	runtime.Notify("info", []byte("New bet = "+intToStr(bet)+" is made"))
+	runtime.Notify("info", []byte("New bet = "+intToStr(bet)+" is made by user "+address.FromHash160(better)))
 
 }
 
-func Finish(finishInitiator interop.Hash160) {
-	ctx := storage.GetContext()
+func Finish(finishInitiator interop.Hash160) interop.Hash160 {
+	ctx := storage.GetReadOnlyContext()
 
-	auctionOwner := storage.Get(ctx, organizerKey).(interop.Hash160)
-	if !finishInitiator.Equals(auctionOwner) {
-		panic("only organizer of the auction can finish it")
+	lotData := storage.Get(ctx, lotKey)
+	if lotData == nil {
+		panic("LotID is not set in storage; auction isn't started")
+	}
+	lotID := lotData.([]byte)
+
+	ownerOfLot := storage.Get(ctx, organizerKey).(interop.Hash160)
+	if !ownerOfLot.Equals(finishInitiator) {
+		panic("you can't finish  with lot because you're not its owner")
 	}
 
-	potentialWinner := storage.Get(ctx, potentialWinnerKey).(interop.Hash160)
-	if potentialWinner == nil {
-		storage.Delete(ctx, initBetKey)
-		storage.Delete(ctx, currentBetKey)
-		storage.Delete(ctx, potentialWinnerKey)
-		storage.Delete(ctx, organizerKey)
-		storage.Delete(ctx, lotKey)
-		runtime.Notify("info", []byte("Auction finished"))
-		return
+	var winner interop.Hash160
+	winnerData := storage.Get(ctx, potentialWinnerKey)
+	if winnerData == nil {
+		winner = ownerOfLot
+	} else {
+		winner = winnerData.(interop.Hash160)
 	}
-
-	lotId := storage.Get(ctx, lotKey)
 
 	nftContractHashStringArray := contract.Call(address.ToHash160(nnsContractHashString), "resolve", contract.All, nnsNftDomain, nnsRecordType).([]string)
 	nftContractHashString := nftContractHashStringArray[0]
-	res := contract.Call(address.ToHash160(nftContractHashString), "transfer", contract.All, potentialWinner, lotId, nil).(bool)
-	if !res {
-		panic("error while transfer token to winner")
-	}
+	contract.Call(address.ToHash160(nftContractHashString), "transfer", contract.All, winner, lotID, nil)
 
-	storage.Delete(ctx, initBetKey)
-	storage.Delete(ctx, currentBetKey)
-	storage.Delete(ctx, potentialWinnerKey)
-	storage.Delete(ctx, organizerKey)
-	storage.Delete(ctx, lotKey)
+	clearStorage()
 
-	runtime.Notify("info", []byte("Auction finished"))
+	runtime.Notify("info", []byte("Auction has been finished. Winner is: "+address.FromHash160(winner)))
 
-}
-
-func intToStr(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	var chars = "0123456789"
-	var result string
-	for value > 0 {
-		result = string(chars[value%10]) + result
-		value = value / 10
-	}
-
-	return result
+	return winner
 }
 
 func ShowCurrentBet() string {
@@ -165,4 +147,29 @@ func ShowLotId() string {
 	}
 
 	return string(data.([]byte))
+}
+
+func intToStr(value int) string {
+	if value == 0 {
+		return "0"
+	}
+	var chars = "0123456789"
+	var result string
+	for value > 0 {
+		result = string(chars[value%10]) + result
+		value = value / 10
+	}
+
+	return result
+}
+
+// clearStorage in this moment this func delete all values storage by hardcode prefix
+func clearStorage() {
+	ctx := storage.GetContext()
+
+	storage.Delete(ctx, initBetKey)
+	storage.Delete(ctx, currentBetKey)
+	storage.Delete(ctx, potentialWinnerKey)
+	storage.Delete(ctx, lotKey)
+	storage.Delete(ctx, organizerKey)
 }

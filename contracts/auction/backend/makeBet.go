@@ -12,18 +12,25 @@ import (
 )
 
 func (s *Server) proceedMainTxMakeBet(nAct *notary.Actor, notaryEvent *result.NotaryRequestEvent) error {
-	err := nAct.Sign(notaryEvent.NotaryRequest.MainTransaction)
+
+	err := nAct.Sign(notaryEvent.NotaryRequest.MainTransaction) // sign transaction
 	if err != nil {
 		return fmt.Errorf("sign: %w", err)
 	}
 
+	// send notary query
 	mainHash, fallbackHash, vub, err := nAct.Notarize(notaryEvent.NotaryRequest.MainTransaction, nil)
+	if err != nil {
+		return fmt.Errorf("notarize: %w", err)
+	}
+
 	s.log.Info("notarize sending",
-		zap.String("hash", notaryEvent.NotaryRequest.Hash().String()),
-		zap.String("main", mainHash.String()), zap.String("fb", fallbackHash.String()),
+		zap.String("hash", notaryEvent.NotaryRequest.MainTransaction.Hash().String()),
+		zap.String("main", mainHash.String()),
+		zap.String("fallback", fallbackHash.String()),
 		zap.Uint32("vub", vub))
 
-	_, err = nAct.Wait(mainHash, fallbackHash, vub, err) // ждем, пока какая-нибудь tx будет принята
+	_, err = nAct.Wait(mainHash, fallbackHash, vub, err)
 	if err != nil {
 		return fmt.Errorf("wait: %w", err)
 	}
@@ -32,27 +39,30 @@ func (s *Server) proceedMainTxMakeBet(nAct *notary.Actor, notaryEvent *result.No
 }
 
 func validateNotaryRequestMakeBet(req *payload.P2PNotaryRequest, s *Server) (util.Uint160, int, error) {
+
 	args, contractHash, err := validateNotaryRequestPreProcessing(req)
 	if err != nil {
 		return util.Uint160{}, 0, err
 	}
 
-	contractHashExpected := s.auctionHash
+	bet := int(binary.LittleEndian.Uint16(args[0].Param()))
 
-	if !contractHash.Equals(contractHashExpected) {
-		return util.Uint160{}, 0, fmt.Errorf("unexpected contract hash: %s", contractHash)
-	}
-
-	if len(args) != 2 { // makeBet принимает ровно 2 аргумента
+	if len(args) != 2 {
 		return util.Uint160{}, 0, fmt.Errorf("invalid param length: %d", len(args))
 	}
 
-	bet := int(binary.LittleEndian.Uint16(args[0].Param()))
+	if !contractHash.Equals(s.auctionHash) {
+		return util.Uint160{}, 0, fmt.Errorf("unexpected contract hash: %s", contractHash)
+	}
 
-	sh, err := util.Uint160DecodeBytesBE(args[1].Param())
+	scriptHash, err := util.Uint160DecodeBytesBE(args[1].Param())
 	if err != nil {
 		return util.Uint160{}, 0, fmt.Errorf("could not decode script hash: %w", err)
 	}
 
-	return sh, bet, err
+	return scriptHash, bet, err
+}
+
+func (s *Server) checkNotaryRequestMakeBet(nAct *notary.Actor, better util.Uint160, bet int) (bool, error) {
+	return true, nil
 }

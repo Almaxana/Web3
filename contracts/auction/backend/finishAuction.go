@@ -22,7 +22,7 @@ func (s *Server) proceedMainTxFinishAuction(nAct *notary.Actor, notaryEvent *res
 		zap.String("main", mainHash.String()), zap.String("fb", fallbackHash.String()),
 		zap.Uint32("vub", vub))
 
-	_, err = nAct.Wait(mainHash, fallbackHash, vub, err) // ждем, пока какая-нибудь tx будет принята
+	_, err = nAct.Wait(mainHash, fallbackHash, vub, err)
 	if err != nil {
 		return fmt.Errorf("wait: %w", err)
 	}
@@ -30,26 +30,30 @@ func (s *Server) proceedMainTxFinishAuction(nAct *notary.Actor, notaryEvent *res
 	return nil
 }
 
-func validateNotaryRequestFinishAuction(req *payload.P2PNotaryRequest, s *Server) (util.Uint160, error) {
+func validateNotaryRequestFinishAuction(req *payload.P2PNotaryRequest, s *Server) error {
 	args, contractHash, err := validateNotaryRequestPreProcessing(req)
 	if err != nil {
-		return util.Uint160{}, err
+		return err
 	}
 
 	contractHashExpected := s.auctionHash
 
 	if !contractHash.Equals(contractHashExpected) {
-		return util.Uint160{}, fmt.Errorf("unexpected contract hash: %s", contractHash)
+		return fmt.Errorf("unexpected contract hash: %s", contractHash)
 	}
 
-	if len(args) != 1 { // finish принимает ровно 1 аргумент
-		return util.Uint160{}, fmt.Errorf("invalid param length: %d", len(args))
+	if len(args) != 1 {
+		return fmt.Errorf("invalid param length: %d", len(args))
 	}
 
-	sh, err := util.Uint160DecodeBytesBE(args[0].Param())
+	_, err = util.Uint160DecodeBytesBE(args[0].Param())
 	if err != nil {
-		return util.Uint160{}, fmt.Errorf("could not decode script hash: %w", err)
+		return fmt.Errorf("could not decode script hash: %w", err)
 	}
 
-	return sh, err
+	return nil
+}
+
+func (s *Server) checkNotaryRequestFinishAuction(nAct *notary.Actor, finisher util.Uint160) (bool, error) {
+	return true, nil
 }

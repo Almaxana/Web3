@@ -22,6 +22,7 @@ func validateNotaryRequestGetNft(req *payload.P2PNotaryRequest, s *Server) (util
 	}
 
 	contractHashExpected := s.nftHash
+
 	if !contractHash.Equals(contractHashExpected) {
 		return util.Uint160{}, "", fmt.Errorf("unexpected contract hash: %s", contractHash)
 	}
@@ -65,6 +66,8 @@ func (s *Server) proceedMainTxGetNft(ctx context.Context, nAct *notary.Actor, no
 		}
 	}()
 
+	// кладем json билета во frost fs
+
 	var ownerID user.ID
 	user.IDFromKey(&ownerID, s.acc.PrivateKey().PrivateKey.PublicKey)
 
@@ -85,11 +88,15 @@ func (s *Server) proceedMainTxGetNft(ctx context.Context, nAct *notary.Actor, no
 	s.log.Info("put object", zap.String("url", url), zap.String("address", addr))
 
 	_, err = s.act.Wait(s.act.SendCall(s.nftHash, "setAddress", tokenName, addr)) // добавляем адрес токену. После того, как произошел mint, заполнены у нового
-	// nft будут поля, кроме address. Он будет добавляться отдельно здесь, после того, как токен создался.
-	// Потому что пользователь должен знать, какую nft он хочет выписать
+	// nft будут поля, кроме address. Он будет добавляться отдельно здесь, после того, как токен создался, потому что адрес frost fs ему присваивается только после
+	// помещения его вхранилище
 	if err != nil {
 		return fmt.Errorf("wait setAddress: %w", err)
 	}
 
 	return nil
+}
+
+func (s *Server) checkNotaryRequestGetNft(nAct *notary.Actor, tokenName string) (bool, error) {
+	return true, nil
 }

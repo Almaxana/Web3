@@ -23,6 +23,7 @@ import (
 	"github.com/nspcc-dev/neo-go/pkg/core/state"
 	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
 	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
+	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
 	"github.com/nspcc-dev/neo-go/pkg/encoding/base58"
 	"github.com/nspcc-dev/neo-go/pkg/rpcclient"
 	"github.com/nspcc-dev/neo-go/pkg/rpcclient/actor"
@@ -44,7 +45,7 @@ const (
 	cfgBackendURL    = "backend_url"
 )
 
-var listOfNftNames []string
+var listOfTickets []string
 
 func main() {
 	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM) // если пользователь нажмет ctrl+C, то завершим выполнение
@@ -83,103 +84,79 @@ func main() {
 	auctionContractHash, err := GetNnsResolve("auc.auc", nnsContractHash, viper.GetString(cfgRPCEndpoint))
 	die(err)
 
-	numbers := make([]int, 25) // создание списка имен пока еще свободных nft
-	for i := 1; i <= 25; i++ {
+	numbers := make([]int, 100) // создание списка имен пока еще свободных nft
+	for i := 1; i <= 100; i++ {
 		numbers[i-1] = i
 	}
-	listOfNftNames = make([]string, len(numbers))
+	listOfTickets = make([]string, len(numbers))
 	for i, num := range numbers {
-		listOfNftNames[i] = strconv.Itoa(num)
+		listOfTickets[i] = strconv.Itoa(num)
 	}
 
-	go ListenNotifications(rpcEndpointWc, auctionContractHash.StringLE())
+	go ListenNotifications(ctx, rpcEndpointWc, auctionContractHash.StringLE())
 
-	reader := bufio.NewReader(os.Stdin) // создаём reader для чтения команд
+	in := make(chan string)
+
+	go func(ctx context.Context, in chan<- string) {
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			select {
+			case <-ctx.Done():
+				close(in)
+				die(ctx.Err())
+				return
+			default:
+				input, err := reader.ReadString('\n')
+				if err != nil {
+					fmt.Println("Ошибка ввода:", err)
+					continue
+				}
+				in <- strings.TrimSpace(input)
+			}
+		}
+	}(ctx, in)
+
 	for {
 		fmt.Print("Введите команду: ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Println("Ошибка ввода:", err)
-			continue
-		}
-		input = strings.TrimSpace(input)
-		args := strings.Fields(input)
 
-		commandName := args[0]
+		select {
+		case <-ctx.Done():
+			die(ctx.Err())
+		case input := <-in:
+			args := strings.Fields(input)
 
-		die(claimNotaryDeposit(acc)) // запрос НД
+			commandName := args[0]
 
-		switch commandName {
-		case "startAuction":
-			nftId := args[1] // lot
+			die(claimNotaryDeposit(acc)) // запрос НД
 
-			initBetStr := args[2] // initBet
-			initBet, err := strconv.Atoi(initBetStr)
-			if err != nil {
-				fmt.Printf("Error converting bet number to integer: %v\n", err)
-				return
+			switch commandName {
+			case "startAuction":
+				nftId := args[1] // lot
+
+				initBetStr := args[2] // initBet
+				initBet, err := strconv.Atoi(initBetStr)
+				if err != nil {
+					fmt.Printf("Error converting bet number to integer: %v\n", err)
+					return
+				}
+				die(makeNotaryRequestStartAuction(backendKey, acc, rpcCli, auctionContractHash, nftId, initBet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
+			case "getNFT":
+				die(makeNotaryRequestGetNft(backendKey, acc, rpcCli, nftContractHash))
+			case "makeBet":
+				betStr := args[1]
+				bet, err := strconv.Atoi(betStr)
+				if err != nil {
+					fmt.Printf("Error converting bet number to integer: %v\n", err)
+					return
+				}
+				die(makeNotaryRequestMakeBet(backendKey, acc, rpcCli, auctionContractHash, bet))
+			case "finishAuction":
+				die(makeNotaryRequestFinishAuction(backendKey, acc, rpcCli, auctionContractHash))
+			default:
+				fmt.Printf("Unknown commandName: %s\n", commandName)
 			}
-			die(makeNotaryRequestStartAuction(backendKey, acc, rpcCli, auctionContractHash, nftId, initBet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
-		case "makeBet":
-			betStr := args[1]
-			bet, err := strconv.Atoi(betStr)
-			if err != nil {
-				fmt.Printf("Error converting bet number to integer: %v\n", err)
-				return
-			}
-			die(makeNotaryRequestMakeBet(backendKey, acc, rpcCli, auctionContractHash, bet)) // создание НЗ (оборачивает main tx, которая состоит в вызове метода контракта)
-		case "finishAuction":
-			die(makeNotaryRequestFinishAuction(backendKey, acc, rpcCli, auctionContractHash))
-		case "getNFT":
-			die(makeNotaryRequestGetNft(backendKey, acc, rpcCli, nftContractHash))
-		case "exit":
-			return
-		default:
-			fmt.Printf("Unknown commandName: %s\n", commandName)
 		}
-
 	}
-
-}
-
-func claimNotaryDeposit(acc *wallet.Account) error {
-	resp, err := http.Get(viper.GetString(cfgBackendURL) + "/notary-deposit/" + acc.Address) // формируем http запрос к backendу, он слушает http
-	// запросы на порту 5555, туда и говорим о своей просьбу накинуть нам НД
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("notary deposit failed: %d, %s", resp.StatusCode, resp.Status)
-	}
-
-	return nil
-}
-
-func makeNotaryRequestPreProcessing(acc *wallet.Account, backendKey *keys.PublicKey, rpcCli *rpcclient.Client) (*notary.Actor, error) {
-	coSigners := []actor.SignerAccount{
-		{
-			Signer: transaction.Signer{ // первый подписант - backend, который будет платить за tx, когда она примется (потому что платит первый подписант). Мы не знаем его  SK, поэтому ставим PK
-				Account: backendKey.GetScriptHash(),
-				Scopes:  transaction.None,
-			},
-			Account: notary.FakeSimpleAccount(backendKey),
-		},
-		{
-			Signer: transaction.Signer{
-				Account: acc.ScriptHash(), // следующий подписант - client, данная программа, она знает свой SK, поэтому ставит его
-				Scopes:  transaction.Global,
-			},
-			Account: acc,
-		},
-	}
-
-	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
-	if err != nil {
-		return nil, err
-	}
-
-	return nAct, err
 }
 
 func GetNnsResolve(domainName string, nnsContractHash string, rpcEndpoint string) (util.Uint160, error) {
@@ -279,6 +256,45 @@ func GetNnsResolve(domainName string, nnsContractHash string, rpcEndpoint string
 	return util.Uint160{}, fmt.Errorf("stack is empty or unexpected structure")
 }
 
+func claimNotaryDeposit(acc *wallet.Account) error {
+	resp, err := http.Get(viper.GetString(cfgBackendURL) + "/notary-deposit/" + acc.Address) // формируем http запрос к backendу, он слушает http
+	// запросы на порту 5555, туда и говорим о своей просьбу накинуть нам НД
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("notary deposit failed: %d, %s", resp.StatusCode, resp.Status)
+	}
+
+	return nil
+}
+func makeNotaryRequestPreProcessing(acc *wallet.Account, backendKey *keys.PublicKey, rpcCli *rpcclient.Client) (*notary.Actor, error) {
+	coSigners := []actor.SignerAccount{
+		{
+			Signer: transaction.Signer{ // первый подписант - backend, который будет платить за tx, когда она примется (потому что платит первый подписант). Мы не знаем его  SK, поэтому ставим PK
+				Account: backendKey.GetScriptHash(),
+				Scopes:  transaction.None,
+			},
+			Account: notary.FakeSimpleAccount(backendKey),
+		},
+		{
+			Signer: transaction.Signer{
+				Account: acc.ScriptHash(), // следующий подписант - client, данная программа, она знает свой SK, поэтому ставит его
+				Scopes:  transaction.Global,
+			},
+			Account: acc,
+		},
+	}
+
+	nAct, err := notary.NewActor(rpcCli, coSigners, acc) // обертка актора (клиенты; подписанты; акк, который отправляет tx) для создания НЗ
+	if err != nil {
+		return nil, err
+	}
+
+	return nAct, err
+}
+
 func makeNotaryRequestPostProcessing(tx *transaction.Transaction, nAct *notary.Actor) (*state.AppExecResult, error) {
 	mainHash, fallbackHash, vub, err := nAct.Notarize(tx, nil) // отправка нотариального запроса; vub = valid until block
 	if err != nil {
@@ -300,9 +316,9 @@ func makeNotaryRequestPostProcessing(tx *transaction.Transaction, nAct *notary.A
 }
 
 func makeNotaryRequestGetNft(backendKey *keys.PublicKey, acc *wallet.Account, rpcCli *rpcclient.Client, contractHash util.Uint160) error {
-	nftName, err := getFreeNftName(rpcCli, acc, contractHash) // находит свободную гифку
+	nftName, err := getFreeTicket(rpcCli, acc, contractHash) // находит свободную гифку
 	if err != nil {
-		return fmt.Errorf("get free product: %w", err)
+		return fmt.Errorf("get free ticket: %w", err)
 	}
 
 	nAct, err := makeNotaryRequestPreProcessing(acc, backendKey, rpcCli)
@@ -365,10 +381,9 @@ func makeNotaryRequestMakeBet(backendKey *keys.PublicKey, acc *wallet.Account, r
 		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
 	}
 
-	tx, err := nAct.MakeTunedCall(contractHash, "makeBet", nil, nil, acc.ScriptHash(), bet) // tx = вызов метода makeBet на
-	// контракте auction
+	tx, err := nAct.MakeTunedCall(contractHash, "makeBet", nil, nil, acc.ScriptHash(), bet)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create transaction for makeBet: %w", err)
 	}
 
 	_, err = makeNotaryRequestPostProcessing(tx, nAct)
@@ -385,24 +400,36 @@ func makeNotaryRequestFinishAuction(backendKey *keys.PublicKey, acc *wallet.Acco
 		return fmt.Errorf("makeNotaryRequestPreProcessing: %w", err)
 	}
 
-	tx, err := nAct.MakeTunedCall(contractHash, "finish", nil, nil, acc.ScriptHash()) // tx = вызов метода finish на
-	// контракте auction
+	tx, err := nAct.MakeTunedCall(contractHash, "finish", nil, nil, acc.ScriptHash()) // tx = вызов метода finish на контракте auction
 	if err != nil {
 		return err
 	}
 
-	_, err = makeNotaryRequestPostProcessing(tx, nAct)
+	res, err := makeNotaryRequestPostProcessing(tx, nAct)
 	if err != nil {
 		return fmt.Errorf("makeNotaryRequestPostProcessing: %w", err)
 	}
 
+	if len(res.Stack) != 1 {
+		return fmt.Errorf("invalid stack size: %d", len(res.Stack))
+	}
+
+	winnerBytes, ok := res.Stack[0].Value().([]byte)
+	if !ok {
+		panic("Stack[0] value is not of type []byte")
+	}
+
+	winner, _ := util.Uint160DecodeBytesBE(winnerBytes)
+
+	fmt.Printf("auction finished winner %s\n", address.Uint160ToString(winner))
+
 	return nil
 }
 
-func getFreeNftName(cli *rpcclient.Client, acc *wallet.Account, contractHash util.Uint160) (string, error) {
+func getFreeTicket(cli *rpcclient.Client, acc *wallet.Account, contractHash util.Uint160) (string, error) {
 	// пробегает по списку гифок, определяет свободна или нет, дергая ownerOf. Найдя первую свободную, возвращает
 
-	indexes := make([]uint64, len(listOfNftNames))
+	indexes := make([]uint64, len(listOfTickets))
 	for i := range indexes {
 		indexes[i] = uint64(i)
 	}
@@ -415,15 +442,15 @@ func getFreeNftName(cli *rpcclient.Client, acc *wallet.Account, contractHash uti
 	h := hrw.Hash(acc.ScriptHash().BytesBE()) // сортировка опциональна, может быть какая-то другая логика поиска нужной гифки (ex ML), это просто
 	// как пример того, в каком порядке можно обходить список всех возможных гифок в поиске свободной
 	// если каждый клиент пойдет по порядку, все начнут с начала, а свободны только последние 2, то они все пройдут весь список - очень неэффективно, пусть
-	// идут с разных концов, используем рандеву-хэширование
+	// идут с разных мест, используем рандеву-хэширование
 	hrw.Sort(indexes, h)
 
-	var product string
+	var ticket string
 	for _, index := range indexes {
-		product = listOfNftNames[index]
+		ticket = listOfTickets[index]
 
 		hash := sha256.New()
-		hash.Write([]byte(product))
+		hash.Write([]byte(ticket))
 		tokenID := hash.Sum(nil)
 
 		if _, err := unwrap.Uint160(act.Call(contractHash, "ownerOf", tokenID)); err != nil {
@@ -431,11 +458,11 @@ func getFreeNftName(cli *rpcclient.Client, acc *wallet.Account, contractHash uti
 		}
 	}
 
-	if product == "" {
-		return "", errors.New("all products are taken") // не осталось свободных токенов
+	if ticket == "" {
+		return "", errors.New("all tickets are taken") // не осталось свободных токенов
 	}
 
-	return product, nil
+	return ticket, nil
 }
 
 func die(err error) {

@@ -59,7 +59,7 @@ const (
 	cfgStorageNode      = "storage_node"
 	cfgStorageContainer = "storage_container"
 	cfgListenAddress    = "listen_address"
-	cfgProductApiUrl    = "product_api_url"
+	cfgTicketApiUrl     = "ticket_api_url"
 )
 
 var currentOperation = ""
@@ -141,7 +141,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 		return nil, err
 	}
 
-	productApiUrl := viper.GetString(cfgProductApiUrl)
+	ticketApiUrl := viper.GetString(cfgTicketApiUrl)
 
 	var cnrID cid.ID
 	if err = cnrID.DecodeString(viper.GetString(cfgStorageContainer)); err != nil {
@@ -193,7 +193,7 @@ func NewServer(ctx context.Context) (*Server, error) {
 		cnrID:       cnrID,
 		log:         log,
 		sub:         sub,
-		apiUrl:      productApiUrl,
+		apiUrl:      ticketApiUrl,
 	}, nil
 }
 
@@ -339,7 +339,7 @@ func (s *Server) runNotaryValidator(ctx context.Context) { // слушатель
 
 			switch notaryEvent.Type {
 			case mempoolevent.TransactionAdded:
-				stringVal, _, _, err := s.parseNotaryEvent(notaryEvent)
+				scriptHash, tokenName, nftIdBytes, bet, err := s.parseNotaryEvent(notaryEvent)
 				if err != nil {
 					s.log.Error("parse notary event", zap.Error(err))
 					continue
@@ -347,16 +347,38 @@ func (s *Server) runNotaryValidator(ctx context.Context) { // слушатель
 
 				nAct := s.notaryActor(notaryEvent.NotaryRequest.MainTransaction.Scripts[1])
 
-				isMain, err := s.checkNotaryRequest(nAct, stringVal)
-				if err != nil {
-					s.log.Error("check notary request", zap.Error(err))
-					continue
+				var isMain bool
+				switch currentOperation {
+				case "mint":
+					isMain, err = s.checkNotaryRequestGetNft(nAct, tokenName)
+					if err != nil {
+						s.log.Error("check notary request mint", zap.Error(err))
+						continue
+					}
+				case "start":
+					isMain, err = s.checkNotaryRequestStartAuction(nAct, scriptHash, nftIdBytes, bet)
+					if err != nil {
+						s.log.Error("check notary request start", zap.Error(err))
+						continue
+					}
+				case "makeBet":
+					isMain, err = s.checkNotaryRequestMakeBet(nAct, scriptHash, bet)
+					if err != nil {
+						s.log.Error("check notary request makeBet", zap.Error(err))
+						continue
+					}
+				case "finish":
+					isMain, err = s.checkNotaryRequestFinishAuction(nAct, scriptHash)
+					if err != nil {
+						s.log.Error("check notary request finish", zap.Error(err))
+						continue
+					}
 				}
 
 				if isMain {
 					switch currentOperation {
 					case "mint":
-						err = s.proceedMainTxGetNft(ctx, nAct, notaryEvent, stringVal)
+						err = s.proceedMainTxGetNft(ctx, nAct, notaryEvent, tokenName)
 					case "start":
 						err = s.proceedMainTxStartAuction(nAct, notaryEvent)
 					case "makeBet":
@@ -370,31 +392,31 @@ func (s *Server) runNotaryValidator(ctx context.Context) { // слушатель
 				}
 
 				if err != nil {
-					s.log.Error("proceed notary tx", zap.Bool("main", isMain), zap.Error(err))
+					s.log.Error("proceed notary tx", zap.Bool("main", isMain), zap.String("token", tokenName), zap.Error(err))
 				} else {
-					s.log.Info("proceed notary tx", zap.Bool("main", isMain))
+					s.log.Info("proceed notary tx", zap.Bool("main", isMain), zap.String("token", tokenName))
 				}
 			}
 		}
 	}
 }
 
-func (s *Server) parseNotaryEvent(notaryEvent *result.NotaryRequestEvent) (string, []byte, int, error) {
+func (s *Server) parseNotaryEvent(notaryEvent *result.NotaryRequestEvent) (util.Uint160, string, []byte, int, error) {
 	if len(notaryEvent.NotaryRequest.MainTransaction.Signers) != 3 { // подписанты:  1 - backend , который за все платит, 2 - client, который принимает на свой счет nft,
 		// 3 - нотариальный контракт сам по себе, чья подпись необходима, чтобы  нотариальный запрос состоялся
-		return "", nil, 0, errors.New("error not enough signers")
+		return util.Uint160{}, "", nil, 0, errors.New("error not enough signers")
 	}
 
 	if notaryEvent.NotaryRequest.Witness.ScriptHash().Equals(s.acc.ScriptHash()) {
-		return "", nil, 0, fmt.Errorf("ignore owned notary request: %s", notaryEvent.NotaryRequest.Hash().String())
+		return util.Uint160{}, "", nil, 0, fmt.Errorf("ignore owned notary request: %s", notaryEvent.NotaryRequest.Hash().String())
 	}
 
-	_, tokenName, nftIdBytes, initBet, err := validateNotaryRequest(notaryEvent.NotaryRequest, s)
+	scriptHash, tokenName, nftIdBytes, initBet, err := validateNotaryRequest(notaryEvent.NotaryRequest, s)
 	if err != nil {
-		return "", nil, 0, err
+		return util.Uint160{}, "", nil, 0, err
 	}
 
-	return tokenName, nftIdBytes, initBet, err
+	return scriptHash, tokenName, nftIdBytes, initBet, err
 }
 
 func validateNotaryRequest(req *payload.P2PNotaryRequest, s *Server) (util.Uint160, string, []byte, int, error) {
@@ -425,26 +447,26 @@ func validateNotaryRequest(req *payload.P2PNotaryRequest, s *Server) (util.Uint1
 	contractMethod := string(ops[opsLen-3].param) // название метода - 3я с конца инструкция
 	currentOperation = contractMethod
 	var (
-		sh        util.Uint160
-		stringVal string
-		bytesVal  []byte
-		intVal    int
+		sh         util.Uint160
+		tokenName  string
+		nftIdBytes []byte
+		bet        int
 	)
 
 	switch contractMethod {
 	case "mint":
-		sh, stringVal, err = validateNotaryRequestGetNft(req, s)
+		sh, tokenName, err = validateNotaryRequestGetNft(req, s)
 	case "start":
-		sh, bytesVal, intVal, err = validateNotaryRequestStartAuction(req, s)
+		sh, nftIdBytes, bet, err = validateNotaryRequestStartAuction(req, s)
 	case "makeBet":
-		sh, intVal, err = validateNotaryRequestMakeBet(req, s)
+		sh, bet, err = validateNotaryRequestMakeBet(req, s)
 	case "finish":
-		sh, err = validateNotaryRequestFinishAuction(req, s)
+		err = validateNotaryRequestFinishAuction(req, s)
 	default:
 		fmt.Printf("Unknown contractMethod: %s\n", contractMethod)
 	}
 
-	return sh, stringVal, bytesVal, intVal, err
+	return sh, tokenName, nftIdBytes, bet, err
 }
 
 func validateNotaryRequestPreProcessing(req *payload.P2PNotaryRequest) ([]Op, util.Uint160, error) {
@@ -504,11 +526,6 @@ func validateNotaryRequestPreProcessing(req *payload.P2PNotaryRequest) ([]Op, ut
 	}
 
 	return args, contractHash, err
-}
-
-func (s *Server) checkNotaryRequest(nAct *notary.Actor, tokenName string) (bool, error) { // тут дб логика - точно ли такая tx дб выполнена с такими то параметрами
-	// ex, уникальность токена
-	return true, nil
 }
 
 func (s *Server) proceedFbTx(nAct *notary.Actor, notaryEvent *result.NotaryRequestEvent) error {
@@ -582,7 +599,7 @@ func (s *Server) notaryActor(userWitness transaction.Witness) *notary.Actor {
 
 	coSigners := []actor.SignerAccount{ // симметрично clientу
 		{
-			Signer: transaction.Signer{ // 1 подписант - backend (потому что платит первый подписант), данная программа, и она знает свой SK, его и ставит
+			Signer: transaction.Signer{ // 1 подписант - backend (потому что платит первый подписант), данная программа, и мы она знает свой SK, его и ставит
 				Account: s.acc.ScriptHash(),
 				Scopes:  transaction.None,
 			},
